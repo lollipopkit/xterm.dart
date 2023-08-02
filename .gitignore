@@ -80,3 +80,4 @@ example/lib/debug.dart
 coverage/
 
 example2/
+.fvm
