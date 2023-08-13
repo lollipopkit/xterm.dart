@@ -16,7 +16,7 @@ class CustomTextEdit extends StatefulWidget {
     this.readOnly = false,
     // this.initEditingState = TextEditingValue.empty,
     this.inputType = TextInputType.text,
-    this.inputAction = TextInputAction.newline,
+    this.inputAction = TextInputAction.done,
     this.keyboardAppearance = Brightness.light,
     this.deleteDetection = false,
   }) : super(key: key);
