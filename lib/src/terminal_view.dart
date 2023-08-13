@@ -269,7 +269,7 @@ class TerminalViewState extends State<TerminalView> {
         onComposing: _onComposing,
         onAction: (action) {
           _scrollToBottom();
-          if (action == TextInputAction.done || action == TextInputAction.newline) {
+          if (action == TextInputAction.newline) {
             widget.terminal.keyInput(TerminalKey.enter);
           }
         },
@@ -376,6 +376,11 @@ class TerminalViewState extends State<TerminalView> {
   }
 
   void _onInsert(String text) {
+    // handle [TextInputAction.newline] in [onAction]
+    if (text.isEmpty || text == '\n') {
+      return;
+    }
+
     final key = charToTerminalKey(text.trim());
 
     // On mobile platforms there is no guarantee that virtual keyboard will
