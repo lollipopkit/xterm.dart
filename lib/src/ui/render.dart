@@ -277,6 +277,14 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     }
   }
 
+  String? get selectedText {
+    final selection = _controller.selection;
+    if (selection == null) {
+      return null;
+    }
+    return _terminal.buffer.getText(selection);
+  }
+
   /// Selects characters in the terminal that starts from [from] to [to]. At
   /// least one cell is selected even if [from] and [to] are same.
   void selectCharacters(Offset from, [Offset? to]) {

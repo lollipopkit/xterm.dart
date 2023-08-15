@@ -1,5 +1,9 @@
+import 'dart:io';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
-import 'package:flutter/widgets.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:xterm/src/core/mouse/button.dart';
 import 'package:xterm/src/core/mouse/button_state.dart';
 import 'package:xterm/src/terminal_view.dart';
@@ -15,7 +19,6 @@ class TerminalGestureHandler extends StatefulWidget {
     required this.terminalController,
     this.child,
     this.onTapUp,
-    this.onSingleTapUp,
     this.onTapDown,
     this.onSecondaryTapDown,
     this.onSecondaryTapUp,
@@ -31,8 +34,6 @@ class TerminalGestureHandler extends StatefulWidget {
   final Widget? child;
 
   final GestureTapUpCallback? onTapUp;
-
-  final GestureTapUpCallback? onSingleTapUp;
 
   final GestureTapDownCallback? onTapDown;
 
@@ -51,6 +52,8 @@ class TerminalGestureHandler extends StatefulWidget {
 }
 
 class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
+  final ContextMenuController _menuController = ContextMenuController();
+
   TerminalViewState get terminalView => widget.terminalView;
 
   RenderTerminal get renderTerminal => terminalView.renderTerminal;
@@ -64,7 +67,6 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
     return TerminalGestureDetector(
       child: widget.child,
       onTapUp: widget.onTapUp,
-      onSingleTapUp: onSingleTapUp,
       onTapDown: onTapDown,
       onSecondaryTapDown: onSecondaryTapDown,
       onSecondaryTapUp: onSecondaryTapUp,
@@ -72,7 +74,7 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
       onTertiaryTapUp: onSecondaryTapUp,
       onLongPressStart: onLongPressStart,
       onLongPressMoveUpdate: onLongPressMoveUpdate,
-      // onLongPressUp: onLongPressUp,
+      onLongPressEnd: onLongPressEnd,
       onDragStart: onDragStart,
       onDragUpdate: onDragUpdate,
       onDoubleTapDown: onDoubleTapDown,
@@ -126,6 +128,11 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
   }
 
   void onTapDown(TapDownDetails details) {
+    if (_menuController.isShown) {
+      _menuController.remove();
+      return;
+    }
+
     // onTapDown is special, as it will always call the supplied callback.
     // The TerminalView depends on it to bring the terminal into focus.
     _tapDown(
@@ -134,10 +141,6 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
       TerminalMouseButton.left,
       forceCallback: true,
     );
-  }
-
-  void onSingleTapUp(TapUpDetails details) {
-    _tapUp(widget.onSingleTapUp, details, TerminalMouseButton.left);
   }
 
   void onSecondaryTapDown(TapDownDetails details) {
@@ -170,6 +173,39 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
       _lastLongPressStartDetails!.localPosition,
       details.localPosition,
     );
+  }
+
+  void onLongPressEnd() {
+    if (!(kIsWeb || Platform.isAndroid || Platform.isIOS)) {
+      return;
+    }
+    if (_menuController.isShown) {
+      _menuController.remove();
+      return;
+    }
+    final selected = renderTerminal.selectedText;
+    if (selected?.trim().isNotEmpty ?? false) {
+    _menuController.show(
+      context: context,
+      contextMenuBuilder: (context) {
+        return TextSelectionToolbar(
+          anchorAbove: _lastLongPressStartDetails?.globalPosition ?? Offset(0, 0),
+          anchorBelow: _lastDragStartDetails?.globalPosition ?? Offset(0, 0),
+          children: [
+            IconButton(
+          icon: const Icon(Icons.copy),
+          onPressed: () {
+            if (selected != null) {
+              Clipboard.setData(ClipboardData(text: selected));
+            }
+            _menuController.remove();
+          },
+        ),
+          ],
+        );
+      },
+    );
+    }
   }
 
   // void onLongPressUp() {}
