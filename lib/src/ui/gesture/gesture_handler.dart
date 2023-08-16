@@ -1,6 +1,3 @@
-import 'dart:io';
-
-import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -61,6 +58,7 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
   DragStartDetails? _lastDragStartDetails;
 
   LongPressStartDetails? _lastLongPressStartDetails;
+  LongPressMoveUpdateDetails? _lastLongPressMoveUpdateDetails;
 
   @override
   Widget build(BuildContext context) {
@@ -165,46 +163,47 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
 
   void onLongPressStart(LongPressStartDetails details) {
     _lastLongPressStartDetails = details;
+
     renderTerminal.selectWord(details.localPosition);
   }
 
   void onLongPressMoveUpdate(LongPressMoveUpdateDetails details) {
+    _lastLongPressMoveUpdateDetails = details;
+
     renderTerminal.selectWord(
       _lastLongPressStartDetails!.localPosition,
       details.localPosition,
     );
   }
 
+  /// It will only be triggered on mobile devices.
+  /// See [GestureDetector.onLongPressEnd] which is only applied on
+  /// [PointerDeviceKind.touch]
   void onLongPressEnd() {
-    if (!(kIsWeb || Platform.isAndroid || Platform.isIOS)) {
-      return;
-    }
-    if (_menuController.isShown) {
-      _menuController.remove();
-      return;
-    }
     final selected = renderTerminal.selectedText;
     if (selected?.trim().isNotEmpty ?? false) {
-    _menuController.show(
-      context: context,
-      contextMenuBuilder: (context) {
-        return TextSelectionToolbar(
-          anchorAbove: _lastLongPressStartDetails?.globalPosition ?? Offset(0, 0),
-          anchorBelow: _lastDragStartDetails?.globalPosition ?? Offset(0, 0),
-          children: [
-            IconButton(
-          icon: const Icon(Icons.copy),
-          onPressed: () {
-            if (selected != null) {
-              Clipboard.setData(ClipboardData(text: selected));
-            }
-            _menuController.remove();
-          },
-        ),
-          ],
-        );
-      },
-    );
+      final position =
+          _lastLongPressMoveUpdateDetails?.globalPosition ?? Offset(0, 0);
+      _menuController.show(
+        context: context,
+        contextMenuBuilder: (context) {
+          return TextSelectionToolbar(
+            anchorAbove: position,
+            anchorBelow: position,
+            children: [
+              IconButton(
+                icon: const Icon(Icons.copy),
+                onPressed: () {
+                  if (selected != null) {
+                    Clipboard.setData(ClipboardData(text: selected));
+                  }
+                  _menuController.remove();
+                },
+              ),
+            ],
+          );
+        },
+      );
     }
   }
 

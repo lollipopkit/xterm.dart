@@ -5,6 +5,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/widgets.dart';
 import 'package:xterm/src/core/buffer/cell_offset.dart';
 import 'package:xterm/src/core/buffer/range.dart';
+import 'package:xterm/src/core/buffer/range_line.dart';
 import 'package:xterm/src/core/buffer/segment.dart';
 import 'package:xterm/src/core/mouse/button.dart';
 import 'package:xterm/src/core/mouse/button_state.dart';
@@ -16,6 +17,7 @@ import 'package:xterm/src/ui/selection_mode.dart';
 import 'package:xterm/src/ui/terminal_size.dart';
 import 'package:xterm/src/ui/terminal_text_style.dart';
 import 'package:xterm/src/ui/terminal_theme.dart';
+
 
 typedef EditableRectCallback = void Function(Rect rect, Rect caretRect);
 
@@ -254,10 +256,19 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
   }
 
   /// Selects entire words in the terminal that contains [from] and [to].
+  /// In order to better mobile experience, we need to find the word boundary
+  /// in the range of [y, y-1, y+1] lines sequentially.
   void selectWord(Offset from, [Offset? to]) {
-    final fromOffset = getCellOffset(from);
-    final fromBoundary = _terminal.buffer.getWordBoundary(fromOffset);
+    BufferRangeLine? fromBoundary;
+    /// Toleration for the point position is not accurate.
+    for (final yOffset in [0, -1, 1]) {
+      final fromOffset_ = getCellOffset(from);
+      final fromOffset = CellOffset(fromOffset_.x, fromOffset_.y + yOffset);
+      fromBoundary = _terminal.buffer.getWordBoundary(fromOffset);
+      if (fromBoundary != null) break;
+    }
     if (fromBoundary == null) return;
+
     if (to == null) {
       _controller.setSelection(
         _terminal.buffer.createAnchorFromOffset(fromBoundary.begin),
@@ -265,9 +276,16 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
         mode: SelectionMode.line,
       );
     } else {
-      final toOffset = getCellOffset(to);
-      final toBoundary = _terminal.buffer.getWordBoundary(toOffset);
+      /// Same as find [fromBoundary]
+      BufferRangeLine? toBoundary;
+      for (final yOffset in [0, -1, 1]) {
+        final toOffset_ = getCellOffset(to);
+        final toOffset = CellOffset(toOffset_.x, toOffset_.y + yOffset);
+        toBoundary = _terminal.buffer.getWordBoundary(toOffset);
+        if (toBoundary != null) break;
+      }
       if (toBoundary == null) return;
+
       final range = fromBoundary.merge(toBoundary);
       _controller.setSelection(
         _terminal.buffer.createAnchorFromOffset(range.begin),
