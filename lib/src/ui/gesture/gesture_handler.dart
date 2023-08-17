@@ -125,10 +125,7 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
   }
 
   void onTapDown(TapDownDetails details) {
-    if (_menuController.isShown) {
-      _menuController.remove();
-      return;
-    }
+    _hideCopyToolbar();
 
     // onTapDown is special, as it will always call the supplied callback.
     // The TerminalView depends on it to bring the terminal into focus.
@@ -160,6 +157,7 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
     renderTerminal.selectWord(
       renderTerminal.getCellOffset(details.localPosition),
     );
+    _showCopyToolbar(details.globalPosition);
   }
 
   void onLongPressStart(LongPressStartDetails details) {
@@ -180,33 +178,8 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
   }
 
   /// It will only be triggered on mobile devices.
-  /// See [GestureDetector.onLongPressEnd] which is only applied on
-  /// [PointerDeviceKind.touch]
   void onLongPressEnd(LongPressEndDetails details) {
-    final selected = renderTerminal.selectedText;
-    if (selected?.trim().isNotEmpty ?? false) {
-      final position = details.globalPosition;
-      _menuController.show(
-        context: context,
-        contextMenuBuilder: (context) {
-          return TextSelectionToolbar(
-            anchorAbove: position,
-            anchorBelow: position,
-            children: [
-              IconButton(
-                icon: const Icon(Icons.copy),
-                onPressed: () {
-                  if (selected != null) {
-                    Clipboard.setData(ClipboardData(text: selected));
-                  }
-                  _menuController.remove();
-                },
-              ),
-            ],
-          );
-        },
-      );
-    }
+    _showCopyToolbar(details.globalPosition);
     _lastCellOffset = null;
   }
 
@@ -227,5 +200,40 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
       _lastCellOffset!,
       renderTerminal.getCellOffset(details.globalPosition),
     );
+  }
+
+  void _showCopyToolbar(Offset position) {
+    final selected = renderTerminal.selectedText;
+    if (selected == null) {
+      return;
+    }
+    
+    if (selected.trim().isNotEmpty) {
+      _menuController.show(
+        context: context,
+        contextMenuBuilder: (context) {
+          return TextSelectionToolbar(
+            anchorAbove: position,
+            anchorBelow: position,
+            children: [
+              IconButton(
+                icon: const Icon(Icons.copy),
+                onPressed: () {
+                  Clipboard.setData(ClipboardData(text: selected));
+                  _hideCopyToolbar();
+                },
+              ),
+            ],
+          );
+        },
+      );
+    }
+  }
+
+  void _hideCopyToolbar() {
+    if (_menuController.isShown) {
+      _menuController.remove();
+      return;
+    }
   }
 }

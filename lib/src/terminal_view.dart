@@ -444,11 +444,12 @@ class TerminalViewState extends State<TerminalView> {
   }
 
   void autoScrollDown(LongPressMoveUpdateDetails details) {
-    final scrollThrshold = renderTerminal.lineHeight * 3;
+    final scrollThrshold = renderTerminal.lineHeight * 7;
     final position = _scrollableKey.currentState?.position;
     if (position == null) return;
     final notBottom = position.pixels < position.maxScrollExtent;
-    final shouldScrollDown = details.localPosition.dy > renderTerminal.size.height - scrollThrshold;
+    final shouldScrollDown =
+        details.localPosition.dy > renderTerminal.size.height - scrollThrshold;
     if (shouldScrollDown && notBottom) {
       position.animateTo(
         position.pixels + scrollThrshold,

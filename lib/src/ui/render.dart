@@ -254,7 +254,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     );
   }
 
-  Iterable<int> _getYOffsetForFindWord(int y) sync* {
+  Iterable<int> _getYOffsetForFindingWord(int y) sync* {
     yield 0;
     if (y > 0) yield -1;
     if (y < _terminal.buffer.lines.length - 1) yield 1;
@@ -266,10 +266,8 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
   /// But we should check y>0 before y-1 and y<terminalHeight before y+1.
   void selectWord(CellOffset from, [CellOffset? to]) {
     BufferRangeLine? fromBoundary;
-
     /// Toleration for the point position is not accurate.
-    for (final yOffset in _getYOffsetForFindWord(from.y)) {
-      print('from.y: ${from.y}, yOffset: $yOffset');
+    for (final yOffset in _getYOffsetForFindingWord(from.y)) {
       final fromOffset = CellOffset(from.x, from.y + yOffset);
       fromBoundary = _terminal.buffer.getWordBoundary(fromOffset);
       if (fromBoundary != null) break;
@@ -285,8 +283,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     } else {
       /// Same as find [fromBoundary]
       BufferRangeLine? toBoundary;
-      for (final yOffset in _getYOffsetForFindWord(to.y)) {
-        print('to.y: ${to.y}, yOffset: $yOffset');
+      for (final yOffset in _getYOffsetForFindingWord(to.y)) {
         final toOffset = CellOffset(to.x, to.y + yOffset);
         toBoundary = _terminal.buffer.getWordBoundary(toOffset);
         if (toBoundary != null) break;
