@@ -18,7 +18,6 @@ import 'package:xterm/src/ui/terminal_size.dart';
 import 'package:xterm/src/ui/terminal_text_style.dart';
 import 'package:xterm/src/ui/terminal_theme.dart';
 
-
 typedef EditableRectCallback = void Function(Rect rect, Rect caretRect);
 
 class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
@@ -255,15 +254,23 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     );
   }
 
+  Iterable<int> _getYOffsetForFindWord(int y) sync* {
+    yield 0;
+    if (y > 0) yield -1;
+    if (y < _terminal.buffer.lines.length - 1) yield 1;
+  }
+
   /// Selects entire words in the terminal that contains [from] and [to].
   /// In order to better mobile experience, we need to find the word boundary
-  /// in the range of [y, y-1, y+1] lines sequentially.
-  void selectWord(Offset from, [Offset? to]) {
+  /// in the range of [y, y+1, y-1] lines sequentially.
+  /// But we should check y>0 before y-1 and y<terminalHeight before y+1.
+  void selectWord(CellOffset from, [CellOffset? to]) {
     BufferRangeLine? fromBoundary;
+
     /// Toleration for the point position is not accurate.
-    for (final yOffset in [0, -1, 1]) {
-      final fromOffset_ = getCellOffset(from);
-      final fromOffset = CellOffset(fromOffset_.x, fromOffset_.y + yOffset);
+    for (final yOffset in _getYOffsetForFindWord(from.y)) {
+      print('from.y: ${from.y}, yOffset: $yOffset');
+      final fromOffset = CellOffset(from.x, from.y + yOffset);
       fromBoundary = _terminal.buffer.getWordBoundary(fromOffset);
       if (fromBoundary != null) break;
     }
@@ -278,9 +285,9 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     } else {
       /// Same as find [fromBoundary]
       BufferRangeLine? toBoundary;
-      for (final yOffset in [0, -1, 1]) {
-        final toOffset_ = getCellOffset(to);
-        final toOffset = CellOffset(toOffset_.x, toOffset_.y + yOffset);
+      for (final yOffset in _getYOffsetForFindWord(to.y)) {
+        print('to.y: ${to.y}, yOffset: $yOffset');
+        final toOffset = CellOffset(to.x, to.y + yOffset);
         toBoundary = _terminal.buffer.getWordBoundary(toOffset);
         if (toBoundary != null) break;
       }
@@ -305,21 +312,19 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
 
   /// Selects characters in the terminal that starts from [from] to [to]. At
   /// least one cell is selected even if [from] and [to] are same.
-  void selectCharacters(Offset from, [Offset? to]) {
-    final fromPosition = getCellOffset(from);
+  void selectCharacters(CellOffset from, [CellOffset? to]) {
     if (to == null) {
       _controller.setSelection(
-        _terminal.buffer.createAnchorFromOffset(fromPosition),
-        _terminal.buffer.createAnchorFromOffset(fromPosition),
+        _terminal.buffer.createAnchorFromOffset(from),
+        _terminal.buffer.createAnchorFromOffset(from),
       );
     } else {
-      var toPosition = getCellOffset(to);
-      if (toPosition.x >= fromPosition.x) {
-        toPosition = CellOffset(toPosition.x + 1, toPosition.y);
+      if (to.x >= from.x) {
+        to = CellOffset(to.x + 1, to.y);
       }
       _controller.setSelection(
-        _terminal.buffer.createAnchorFromOffset(fromPosition),
-        _terminal.buffer.createAnchorFromOffset(toPosition),
+        _terminal.buffer.createAnchorFromOffset(from),
+        _terminal.buffer.createAnchorFromOffset(to),
       );
     }
   }

@@ -12,7 +12,6 @@ import 'package:xterm/src/ui/custom_text_edit.dart';
 import 'package:xterm/src/ui/gesture/gesture_handler.dart';
 import 'package:xterm/src/ui/input_map.dart';
 import 'package:xterm/src/ui/keyboard_listener.dart';
-import 'package:xterm/src/ui/keyboard_visibility.dart';
 import 'package:xterm/src/ui/render.dart';
 import 'package:xterm/src/ui/scroll_handler.dart';
 import 'package:xterm/src/ui/shortcut/actions.dart';
@@ -295,11 +294,6 @@ class TerminalViewState extends State<TerminalView> {
       child: child,
     );
 
-    child = KeyboardVisibilty(
-      onKeyboardShow: _onKeyboardShow,
-      child: child,
-    );
-
     child = TerminalGestureHandler(
       terminalView: this,
       terminalController: _controller,
@@ -434,14 +428,6 @@ class TerminalViewState extends State<TerminalView> {
     return handled ? KeyEventResult.handled : KeyEventResult.ignored;
   }
 
-  void _onKeyboardShow() {
-    if (_focusNode.hasFocus) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        _scrollToBottom();
-      });
-    }
-  }
-
   void _onEditableRect(Rect rect, Rect caretRect) {
     _customTextEditKey.currentState?.setEditableRect(rect, caretRect);
   }
@@ -449,7 +435,35 @@ class TerminalViewState extends State<TerminalView> {
   void _scrollToBottom() {
     final position = _scrollableKey.currentState?.position;
     if (position != null) {
-      position.jumpTo(position.maxScrollExtent);
+      position.animateTo(
+        position.maxScrollExtent,
+        duration: const Duration(milliseconds: 377),
+        curve: Curves.fastEaseInToSlowEaseOut,
+      );
+    }
+  }
+
+  void autoScrollDown(LongPressMoveUpdateDetails details) {
+    final scrollThrshold = renderTerminal.lineHeight * 3;
+    final position = _scrollableKey.currentState?.position;
+    if (position == null) return;
+    final notBottom = position.pixels < position.maxScrollExtent;
+    final shouldScrollDown = details.localPosition.dy > renderTerminal.size.height - scrollThrshold;
+    if (shouldScrollDown && notBottom) {
+      position.animateTo(
+        position.pixels + scrollThrshold,
+        duration: const Duration(milliseconds: 177),
+        curve: Curves.fastEaseInToSlowEaseOut,
+      );
+    }
+    final notTop = position.pixels > 0;
+    final shouldScrollUp = details.localPosition.dy < scrollThrshold;
+    if (shouldScrollUp && notTop) {
+      position.animateTo(
+        position.pixels - scrollThrshold,
+        duration: const Duration(milliseconds: 177),
+        curve: Curves.fastEaseInToSlowEaseOut,
+      );
     }
   }
 }

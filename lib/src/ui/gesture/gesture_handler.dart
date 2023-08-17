@@ -1,11 +1,11 @@
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:xterm/src/core/buffer/cell_offset.dart';
 import 'package:xterm/src/core/mouse/button.dart';
 import 'package:xterm/src/core/mouse/button_state.dart';
 import 'package:xterm/src/terminal_view.dart';
 import 'package:xterm/src/ui/controller.dart';
-import 'package:xterm/src/ui/gesture/gesture_detector.dart';
 import 'package:xterm/src/ui/pointer_input.dart';
 import 'package:xterm/src/ui/render.dart';
 
@@ -55,14 +55,11 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
 
   RenderTerminal get renderTerminal => terminalView.renderTerminal;
 
-  DragStartDetails? _lastDragStartDetails;
-
-  LongPressStartDetails? _lastLongPressStartDetails;
-  LongPressMoveUpdateDetails? _lastLongPressMoveUpdateDetails;
+  CellOffset? _lastCellOffset;
 
   @override
   Widget build(BuildContext context) {
-    return TerminalGestureDetector(
+    return GestureDetector(
       child: widget.child,
       onTapUp: widget.onTapUp,
       onTapDown: onTapDown,
@@ -73,8 +70,10 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
       onLongPressStart: onLongPressStart,
       onLongPressMoveUpdate: onLongPressMoveUpdate,
       onLongPressEnd: onLongPressEnd,
-      onDragStart: onDragStart,
-      onDragUpdate: onDragUpdate,
+      onVerticalDragStart: onDragStart,
+      onVerticalDragUpdate: onDragUpdate,
+      onHorizontalDragStart: onDragStart,
+      onHorizontalDragUpdate: onDragUpdate,
       onDoubleTapDown: onDoubleTapDown,
     );
   }
@@ -158,32 +157,35 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
   }
 
   void onDoubleTapDown(TapDownDetails details) {
-    renderTerminal.selectWord(details.localPosition);
+    renderTerminal.selectWord(
+      renderTerminal.getCellOffset(details.localPosition),
+    );
   }
 
   void onLongPressStart(LongPressStartDetails details) {
-    _lastLongPressStartDetails = details;
-
-    renderTerminal.selectWord(details.localPosition);
+    _lastCellOffset ??= renderTerminal.getCellOffset(details.localPosition);
   }
 
   void onLongPressMoveUpdate(LongPressMoveUpdateDetails details) {
-    _lastLongPressMoveUpdateDetails = details;
+    terminalView.autoScrollDown(details);
+
+    if (_lastCellOffset == null) {
+      return;
+    }
 
     renderTerminal.selectWord(
-      _lastLongPressStartDetails!.localPosition,
-      details.localPosition,
+      _lastCellOffset!,
+      renderTerminal.getCellOffset(details.localPosition),
     );
   }
 
   /// It will only be triggered on mobile devices.
   /// See [GestureDetector.onLongPressEnd] which is only applied on
   /// [PointerDeviceKind.touch]
-  void onLongPressEnd() {
+  void onLongPressEnd(LongPressEndDetails details) {
     final selected = renderTerminal.selectedText;
     if (selected?.trim().isNotEmpty ?? false) {
-      final position =
-          _lastLongPressMoveUpdateDetails?.globalPosition ?? Offset(0, 0);
+      final position = details.globalPosition;
       _menuController.show(
         context: context,
         contextMenuBuilder: (context) {
@@ -205,22 +207,25 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
         },
       );
     }
+    _lastCellOffset = null;
   }
 
-  // void onLongPressUp() {}
-
   void onDragStart(DragStartDetails details) {
-    _lastDragStartDetails = details;
+    if (details.kind == PointerDeviceKind.touch) {
+      return;
+    }
 
-    details.kind == PointerDeviceKind.mouse
-        ? renderTerminal.selectCharacters(details.localPosition)
-        : renderTerminal.selectWord(details.localPosition);
+    _lastCellOffset ??= renderTerminal.getCellOffset(details.globalPosition);
   }
 
   void onDragUpdate(DragUpdateDetails details) {
+    if (_lastCellOffset == null) {
+      return;
+    }
+
     renderTerminal.selectCharacters(
-      _lastDragStartDetails!.localPosition,
-      details.localPosition,
+      _lastCellOffset!,
+      renderTerminal.getCellOffset(details.globalPosition),
     );
   }
 }
