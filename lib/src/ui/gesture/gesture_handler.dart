@@ -186,9 +186,7 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
   }
 
   void onDragStart(DragStartDetails details) {
-    if (details.kind == PointerDeviceKind.touch) {
-      return;
-    }
+    if (details.kind == PointerDeviceKind.touch) return;
 
     _lastCellOffset ??= renderTerminal.getCellOffset(details.globalPosition);
   }

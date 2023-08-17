@@ -48,6 +48,7 @@ class TerminalView extends StatefulWidget {
     this.readOnly = false,
     this.hardwareKeyboardOnly = false,
     this.simulateScroll = true,
+    this.hideScrollBar = true,
   }) : super(key: key);
 
   /// The underlying terminal that this widget renders.
@@ -143,6 +144,8 @@ class TerminalView extends StatefulWidget {
   /// keys to the application. This is standard behavior for most terminal
   /// emulators. True by default.
   final bool simulateScroll;
+
+  final bool hideScrollBar;
 
   @override
   State<TerminalView> createState() => TerminalViewState();
@@ -244,6 +247,13 @@ class TerminalViewState extends State<TerminalView> {
         );
       },
     );
+
+    if (!widget.hideScrollBar) {
+      child = Scrollbar(
+        controller: _scrollController,
+        child: child,
+      );
+    }
 
     child = TerminalScrollGestureHandler(
       terminal: widget.terminal,
