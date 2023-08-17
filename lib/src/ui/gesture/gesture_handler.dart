@@ -72,8 +72,10 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
       onLongPressEnd: onLongPressEnd,
       onVerticalDragStart: onDragStart,
       onVerticalDragUpdate: onDragUpdate,
+      onVerticalDragEnd: onDragEnd,
       onHorizontalDragStart: onDragStart,
       onHorizontalDragUpdate: onDragUpdate,
+      onHorizontalDragEnd: onDragEnd,
       onDoubleTapDown: onDoubleTapDown,
     );
   }
@@ -200,6 +202,10 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
       _lastCellOffset!,
       renderTerminal.getCellOffset(details.globalPosition),
     );
+  }
+
+  void onDragEnd(DragEndDetails details) {
+    _lastCellOffset = null;
   }
 
   void _showCopyToolbar(Offset position) {

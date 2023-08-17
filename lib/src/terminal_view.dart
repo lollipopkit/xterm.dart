@@ -223,6 +223,7 @@ class TerminalViewState extends State<TerminalView> {
     Widget child = Scrollable(
       key: _scrollableKey,
       controller: _scrollController,
+      physics: const ClampingScrollPhysics(),
       viewportBuilder: (context, offset) {
         return _TerminalView(
           key: _viewportKey,
