@@ -28,7 +28,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     required EdgeInsets padding,
     required bool autoResize,
     required TerminalStyle textStyle,
-    required double textScaleFactor,
+    required TextScaler textScaler,
     required TerminalTheme theme,
     required FocusNode focusNode,
     required TerminalCursorType cursorType,
@@ -48,7 +48,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
         _painter = TerminalPainter(
           theme: theme,
           textStyle: textStyle,
-          textScaleFactor: textScaleFactor,
+          textScaler: textScaler,
         );
 
   Terminal _terminal;
@@ -99,9 +99,9 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     markNeedsLayout();
   }
 
-  set textScaleFactor(double value) {
-    if (value == _painter.textScaleFactor) return;
-    _painter.textScaleFactor = value;
+  set textScaler(TextScaler value) {
+    if (value == _painter.textScaler) return;
+    _painter.textScaler = value;
     markNeedsLayout();
   }
 
@@ -503,7 +503,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
       PlaceholderAlignment.middle,
     );
     builder.pushStyle(
-      style.getTextStyle(textScaleFactor: _painter.textScaleFactor),
+      style.getTextStyle(textScaler: _painter.textScaler),
     );
     builder.addText(composingText);
 
