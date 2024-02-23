@@ -352,7 +352,7 @@ void main() {
         MaterialApp(
           home: Scaffold(
             body: MediaQuery(
-              data: const MediaQueryData(textScaler: TextScaler.linear(2)),
+              data: const MediaQueryData(textScaler: TextScaler.linear(2.0)),
               child: TerminalView(
                 terminal,
               ),

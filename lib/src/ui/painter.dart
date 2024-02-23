@@ -1,6 +1,6 @@
 import 'dart:ui';
-
 import 'package:flutter/painting.dart';
+
 import 'package:flutter/rendering.dart';
 import 'package:xterm/src/ui/palette_builder.dart';
 import 'package:xterm/src/ui/paragraph_cache.dart';

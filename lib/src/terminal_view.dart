@@ -1,4 +1,3 @@
-import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -23,7 +22,7 @@ import 'package:xterm/src/ui/themes.dart';
 class TerminalView extends StatefulWidget {
   const TerminalView(
     this.terminal, {
-    Key? key,
+    super.key,
     this.controller,
     this.theme = TerminalThemes.defaultTheme,
     this.textStyle = const TerminalStyle(),
@@ -44,12 +43,12 @@ class TerminalView extends StatefulWidget {
     this.alwaysShowCursor = false,
     this.deleteDetection = false,
     this.shortcuts,
-    this.onKey,
+    this.onKeyEvent,
     this.readOnly = false,
     this.hardwareKeyboardOnly = false,
     this.simulateScroll = true,
     this.hideScrollBar = true,
-  }) : super(key: key);
+  });
 
   /// The underlying terminal that this widget renders.
   final Terminal terminal;
@@ -62,9 +61,6 @@ class TerminalView extends StatefulWidget {
   /// The style to use for painting characters.
   final TerminalStyle textStyle;
 
-  /// The number of font pixels for each logical pixel. If null, will use the
-  /// [MediaQueryData.textScaler] obtained from [MediaQuery], or 1.0 if
-  /// there is no [MediaQuery] in scope.
   final TextScaler? textScaler;
 
   /// Padding around the inner [Scrollable] widget.
@@ -129,7 +125,7 @@ class TerminalView extends StatefulWidget {
 
   /// Keyboard event handler of the terminal. This has higher priority than
   /// [shortcuts] and input handler of the terminal.
-  final FocusOnKeyEventCallback? onKey;
+  final FocusOnKeyEventCallback? onKeyEvent;
 
   /// True if no input should send to the terminal.
   final bool readOnly;
@@ -236,8 +232,7 @@ class TerminalViewState extends State<TerminalView> {
           padding: MediaQuery.of(context).padding,
           autoResize: widget.autoResize,
           textStyle: widget.textStyle,
-          textScaler:
-              widget.textScaler ?? MediaQuery.textScalerOf(context),
+          textScaler: widget.textScaler ?? MediaQuery.textScalerOf(context),
           theme: widget.theme,
           focusNode: _focusNode,
           cursorType: widget.cursorType,
@@ -283,7 +278,7 @@ class TerminalViewState extends State<TerminalView> {
             widget.terminal.keyInput(TerminalKey.enter);
           }
         },
-        onKey: _handleKeyEvent,
+        onKeyEvent: _handleKeyEvent,
         readOnly: widget.readOnly,
         child: child,
       );
@@ -295,7 +290,7 @@ class TerminalViewState extends State<TerminalView> {
         autofocus: widget.autofocus,
         onInsert: _onInsert,
         onComposing: _onComposing,
-        onKey: _handleKeyEvent,
+        onKeyEvent: _handleKeyEvent,
       );
     }
 
@@ -400,7 +395,7 @@ class TerminalViewState extends State<TerminalView> {
   }
 
   KeyEventResult _handleKeyEvent(FocusNode focusNode, KeyEvent event) {
-    final resultOverride = widget.onKey?.call(focusNode, event);
+    final resultOverride = widget.onKeyEvent?.call(focusNode, event);
     if (resultOverride != null && resultOverride != KeyEventResult.ignored) {
       return resultOverride;
     }
@@ -415,7 +410,7 @@ class TerminalViewState extends State<TerminalView> {
       return shortcutResult;
     }
 
-    if (event is! KeyDownEvent) {
+    if (event is KeyUpEvent) {
       return KeyEventResult.ignored;
     }
 
@@ -427,12 +422,9 @@ class TerminalViewState extends State<TerminalView> {
 
     final handled = widget.terminal.keyInput(
       key,
-      ctrl: event.physicalKey == PhysicalKeyboardKey.controlLeft ||
-          event.physicalKey == PhysicalKeyboardKey.controlRight,
-      alt: event.physicalKey == PhysicalKeyboardKey.altLeft ||
-          event.physicalKey == PhysicalKeyboardKey.altRight,
-      shift: event.physicalKey == PhysicalKeyboardKey.shiftLeft ||
-          event.physicalKey == PhysicalKeyboardKey.shiftRight,
+      ctrl: HardwareKeyboard.instance.isControlPressed,
+      alt: HardwareKeyboard.instance.isAltPressed,
+      shift: HardwareKeyboard.instance.isShiftPressed,
     );
 
     if (handled) {
@@ -485,7 +477,7 @@ class TerminalViewState extends State<TerminalView> {
 
 class _TerminalView extends LeafRenderObjectWidget {
   const _TerminalView({
-    Key? key,
+    super.key,
     required this.terminal,
     required this.controller,
     required this.offset,
@@ -499,7 +491,7 @@ class _TerminalView extends LeafRenderObjectWidget {
     required this.alwaysShowCursor,
     this.onEditableRect,
     this.composingText,
-  }) : super(key: key);
+  });
 
   final Terminal terminal;
 
