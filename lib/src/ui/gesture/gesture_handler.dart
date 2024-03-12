@@ -1,4 +1,5 @@
-import 'package:flutter/gestures.dart';
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:xterm/src/core/buffer/cell_offset.dart';
@@ -22,6 +23,8 @@ class TerminalGestureHandler extends StatefulWidget {
     this.onTertiaryTapDown,
     this.onTertiaryTapUp,
     this.readOnly = false,
+    this.viewOffset = Offset.zero,
+    this.showToolbar = true,
   });
 
   final TerminalViewState terminalView;
@@ -44,6 +47,10 @@ class TerminalGestureHandler extends StatefulWidget {
 
   final bool readOnly;
 
+  final Offset viewOffset;
+
+  final bool showToolbar;
+
   @override
   State<TerminalGestureHandler> createState() => _TerminalGestureHandlerState();
 }
@@ -57,6 +64,8 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
 
   CellOffset? _lastCellOffset;
 
+  late double _originTextSize = terminalView.widget.textStyle.fontSize;
+
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
@@ -67,16 +76,10 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
       onSecondaryTapUp: onSecondaryTapUp,
       onTertiaryTapDown: onSecondaryTapDown,
       onTertiaryTapUp: onSecondaryTapUp,
-      onLongPressStart: onLongPressStart,
-      onLongPressMoveUpdate: onLongPressMoveUpdate,
-      onLongPressEnd: onLongPressEnd,
-      onVerticalDragStart: onDragStart,
-      onVerticalDragUpdate: onDragUpdate,
-      onVerticalDragEnd: onDragEnd,
-      onHorizontalDragStart: onDragStart,
-      onHorizontalDragUpdate: onDragUpdate,
-      onHorizontalDragEnd: onDragEnd,
       onDoubleTapDown: onDoubleTapDown,
+      onScaleEnd: onScaleEnd,
+      onScaleStart: onScaleStart,
+      onScaleUpdate: onScaleUpdate,
     );
   }
 
@@ -162,56 +165,12 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
     _showCopyToolbar(details.globalPosition);
   }
 
-  void onLongPressStart(LongPressStartDetails details) {
-    _lastCellOffset ??= renderTerminal.getCellOffset(details.localPosition);
-  }
-
-  void onLongPressMoveUpdate(LongPressMoveUpdateDetails details) {
-    terminalView.autoScrollDown(details);
-
-    if (_lastCellOffset == null) {
-      return;
-    }
-
-    renderTerminal.selectWord(
-      _lastCellOffset!,
-      renderTerminal.getCellOffset(details.localPosition),
-    );
-  }
-
-  /// It will only be triggered on mobile devices.
-  void onLongPressEnd(LongPressEndDetails details) {
-    _showCopyToolbar(details.globalPosition);
-    _lastCellOffset = null;
-  }
-
-  void onDragStart(DragStartDetails details) {
-    if (details.kind == PointerDeviceKind.touch) return;
-
-    _lastCellOffset ??= renderTerminal.getCellOffset(details.globalPosition);
-  }
-
-  void onDragUpdate(DragUpdateDetails details) {
-    if (_lastCellOffset == null) {
-      return;
-    }
-
-    renderTerminal.selectCharacters(
-      _lastCellOffset!,
-      renderTerminal.getCellOffset(details.globalPosition),
-    );
-  }
-
-  void onDragEnd(DragEndDetails details) {
-    _lastCellOffset = null;
-  }
-
   void _showCopyToolbar(Offset position) {
     final selected = renderTerminal.selectedText;
     if (selected == null) {
       return;
     }
-    
+
     if (selected.trim().isNotEmpty) {
       _menuController.show(
         context: context,
@@ -239,5 +198,37 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
       _menuController.remove();
       return;
     }
+  }
+
+  void onScaleStart(ScaleStartDetails details) {
+    _lastCellOffset ??=
+        renderTerminal.getCellOffset(details.focalPoint - widget.viewOffset);
+  }
+
+  void onScaleEnd(ScaleEndDetails details) {
+    if (widget.showToolbar) {
+      _showCopyToolbar(renderTerminal.getOffset(_lastCellOffset!));
+    }
+    _lastCellOffset = null;
+    _originTextSize = terminalView.textSizeNoti.value;
+  }
+
+  void onScaleUpdate(ScaleUpdateDetails details) {
+    if (details.pointerCount == 1) {
+      renderTerminal.selectCharacters(
+        _lastCellOffset!,
+        renderTerminal.getCellOffset(details.focalPoint - widget.viewOffset),
+      );
+      return;
+    }
+    if (details.pointerCount != 2 || details.scale == 1) {
+      return;
+    }
+    final scale = math.pow(details.scale, 0.3);
+    final fontSize = _originTextSize * scale;
+    if (fontSize < 7 || fontSize > 17) {
+      return;
+    }
+    terminalView.textSizeNoti.value = fontSize;
   }
 }

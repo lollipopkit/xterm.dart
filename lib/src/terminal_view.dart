@@ -47,6 +47,8 @@ class TerminalView extends StatefulWidget {
     this.hardwareKeyboardOnly = false,
     this.simulateScroll = true,
     this.hideScrollBar = true,
+    this.viewOffset = Offset.zero,
+    this.showToolbar = true,
   });
 
   /// The underlying terminal that this widget renders.
@@ -142,6 +144,10 @@ class TerminalView extends StatefulWidget {
 
   final bool hideScrollBar;
 
+  final Offset viewOffset;
+
+  final bool showToolbar;
+
   @override
   State<TerminalView> createState() => TerminalViewState();
 }
@@ -163,7 +169,10 @@ class TerminalViewState extends State<TerminalView> {
 
   late ScrollController _scrollController;
 
-  RenderTerminal get renderTerminal => _viewportKey.currentContext!.findRenderObject() as RenderTerminal;
+  RenderTerminal get renderTerminal =>
+      _viewportKey.currentContext!.findRenderObject() as RenderTerminal;
+
+  late final textSizeNoti = ValueNotifier(widget.textStyle.fontSize);
 
   @override
   void initState() {
@@ -222,21 +231,26 @@ class TerminalViewState extends State<TerminalView> {
       controller: _scrollController,
       physics: const ClampingScrollPhysics(),
       viewportBuilder: (context, offset) {
-        return _TerminalView(
-          key: _viewportKey,
-          terminal: widget.terminal,
-          controller: _controller,
-          offset: offset,
-          padding: MediaQuery.of(context).padding,
-          autoResize: widget.autoResize,
-          textStyle: widget.textStyle,
-          textScaler: widget.textScaler ?? MediaQuery.textScalerOf(context),
-          theme: widget.theme,
-          focusNode: _focusNode,
-          cursorType: widget.cursorType,
-          alwaysShowCursor: widget.alwaysShowCursor,
-          onEditableRect: _onEditableRect,
-          composingText: _composingText,
+        return ValueListenableBuilder(
+          valueListenable: textSizeNoti,
+          builder: (_, textSize, __) {
+            return _TerminalView(
+              key: _viewportKey,
+              terminal: widget.terminal,
+              controller: _controller,
+              offset: offset,
+              padding: MediaQuery.of(context).padding,
+              autoResize: widget.autoResize,
+              textStyle: widget.textStyle.copyWith(fontSize: textSize),
+              textScaler: widget.textScaler ?? MediaQuery.textScalerOf(context),
+              theme: widget.theme,
+              focusNode: _focusNode,
+              cursorType: widget.cursorType,
+              alwaysShowCursor: widget.alwaysShowCursor,
+              onEditableRect: _onEditableRect,
+              composingText: _composingText,
+            );
+          },
         );
       },
     );
@@ -273,7 +287,8 @@ class TerminalViewState extends State<TerminalView> {
         onAction: (action) {
           _scrollToBottom();
           // Android sends TextInputAction.newline when the user presses the virtual keyboard's enter key.
-          if (action == TextInputAction.done || action == TextInputAction.newline) {
+          if (action == TextInputAction.done ||
+              action == TextInputAction.newline) {
             widget.terminal.keyInput(TerminalKey.enter);
           }
         },
@@ -300,12 +315,15 @@ class TerminalViewState extends State<TerminalView> {
     );
 
     child = TerminalGestureHandler(
+      viewOffset: widget.viewOffset,
       terminalView: this,
       terminalController: _controller,
       onTapUp: _onTapUp,
       onTapDown: _onTapDown,
-      onSecondaryTapDown: widget.onSecondaryTapDown != null ? _onSecondaryTapDown : null,
-      onSecondaryTapUp: widget.onSecondaryTapUp != null ? _onSecondaryTapUp : null,
+      onSecondaryTapDown:
+          widget.onSecondaryTapDown != null ? _onSecondaryTapDown : null,
+      onSecondaryTapUp:
+          widget.onSecondaryTapUp != null ? _onSecondaryTapUp : null,
       readOnly: widget.readOnly,
       child: child,
     );
@@ -337,7 +355,8 @@ class TerminalViewState extends State<TerminalView> {
   }
 
   Rect get globalCursorRect {
-    return renderTerminal.localToGlobal(renderTerminal.cursorOffset) & renderTerminal.cellSize;
+    return renderTerminal.localToGlobal(renderTerminal.cursorOffset) &
+        renderTerminal.cellSize;
   }
 
   void _onTapUp(TapUpDetails details) {
