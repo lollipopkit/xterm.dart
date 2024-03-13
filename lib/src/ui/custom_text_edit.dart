@@ -19,33 +19,23 @@ class CustomTextEdit extends StatefulWidget {
     this.inputAction = TextInputAction.done,
     this.keyboardAppearance = Brightness.light,
     this.deleteDetection = false,
+    this.enableSuggestions = true,
   });
 
   final Widget child;
-
   final void Function(String) onInsert;
-
   final void Function() onDelete;
-
   final void Function(String?) onComposing;
-
   final void Function(TextInputAction) onAction;
-
   final KeyEventResult Function(FocusNode, KeyEvent) onKeyEvent;
-
   final FocusNode focusNode;
-
   final bool autofocus;
-
   final bool readOnly;
-
   final TextInputType inputType;
-
   final TextInputAction inputAction;
-
   final Brightness keyboardAppearance;
-
   final bool deleteDetection;
+  final bool enableSuggestions;
 
   @override
   CustomTextEditState createState() => CustomTextEditState();
@@ -164,7 +154,7 @@ class CustomTextEditState extends State<CustomTextEdit> with TextInputClient {
         inputAction: widget.inputAction,
         keyboardAppearance: widget.keyboardAppearance,
         autocorrect: false,
-        enableSuggestions: false,
+        enableSuggestions: widget.enableSuggestions,
         enableIMEPersonalizedLearning: false,
       );
 

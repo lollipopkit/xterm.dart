@@ -50,6 +50,7 @@ class TerminalView extends StatefulWidget {
     this.hideScrollBar = true,
     this.viewOffset = Offset.zero,
     this.showToolbar = true,
+    this.enableSuggestions = true,
   });
 
   /// The underlying terminal that this widget renders.
@@ -148,6 +149,9 @@ class TerminalView extends StatefulWidget {
   final Offset viewOffset;
 
   final bool showToolbar;
+
+  /// If this is false, some Chinese Android will open safe keyboard.
+  final bool enableSuggestions;
 
   @override
   State<TerminalView> createState() => TerminalViewState();
@@ -279,6 +283,7 @@ class TerminalViewState extends State<TerminalView> {
         inputType: widget.keyboardType,
         keyboardAppearance: widget.keyboardAppearance,
         deleteDetection: widget.deleteDetection,
+        enableSuggestions: widget.enableSuggestions,
         onInsert: _onInsert,
         onDelete: () {
           _scrollToBottom();
@@ -317,6 +322,7 @@ class TerminalViewState extends State<TerminalView> {
 
     child = TerminalGestureHandler(
       viewOffset: widget.viewOffset,
+      showToolbar: widget.showToolbar,
       terminalView: this,
       terminalController: _controller,
       onTapUp: _onTapUp,
