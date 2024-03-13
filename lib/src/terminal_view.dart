@@ -17,6 +17,7 @@ import 'package:xterm/src/ui/shortcut/shortcuts.dart';
 import 'package:xterm/src/ui/terminal_text_style.dart';
 import 'package:xterm/src/ui/terminal_theme.dart';
 import 'package:xterm/src/ui/themes.dart';
+import 'package:xterm/xterm.dart';
 
 class TerminalView extends StatefulWidget {
   const TerminalView(
@@ -362,9 +363,14 @@ class TerminalViewState extends State<TerminalView> {
   void _onTapUp(TapUpDetails details) {
     final offset = renderTerminal.getCellOffset(details.localPosition);
     widget.onTapUp?.call(details, offset);
+    widget.terminal.mouseInput(
+      TerminalMouseButton.left,
+      TerminalMouseButtonState.up,
+      offset,
+    );
   }
 
-  void _onTapDown(_) {
+  void _onTapDown(TapDownDetails details) {
     if (_controller.selection != null) {
       _controller.clearSelection();
     } else {
@@ -374,6 +380,11 @@ class TerminalViewState extends State<TerminalView> {
         _focusNode.requestFocus();
       }
     }
+    widget.terminal.mouseInput(
+      TerminalMouseButton.left,
+      TerminalMouseButtonState.down,
+      renderTerminal.getCellOffset(details.localPosition),
+    );
   }
 
   void _onSecondaryTapDown(TapDownDetails details) {
