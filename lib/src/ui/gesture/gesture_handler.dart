@@ -219,6 +219,7 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
         _lastCellOffset!,
         renderTerminal.getCellOffset(details.focalPoint - widget.viewOffset),
       );
+      terminalView.autoScrollDown(details);
       return;
     }
     if (details.pointerCount != 2 || details.scale == 1) {
