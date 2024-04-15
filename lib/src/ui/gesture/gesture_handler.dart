@@ -83,6 +83,12 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
     );
   }
 
+  @override
+  void dispose() {
+    super.dispose();
+    _hideCopyToolbar();
+  }
+
   bool get _shouldSendTapEvent =>
       !widget.readOnly &&
       widget.terminalController.shouldSendPointerInput(PointerInput.tap);
