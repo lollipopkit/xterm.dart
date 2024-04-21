@@ -266,6 +266,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
   /// But we should check y>0 before y-1 and y<terminalHeight before y+1.
   void selectWord(CellOffset from, [CellOffset? to]) {
     BufferRangeLine? fromBoundary;
+
     /// Toleration for the point position is not accurate.
     for (final yOffset in _getYOffsetForFindingWord(from.y)) {
       final fromOffset = CellOffset(from.x, from.y + yOffset);
@@ -324,6 +325,10 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
         _terminal.buffer.createAnchorFromOffset(to),
       );
     }
+  }
+
+  void clearSelection() {
+    _controller.clearSelection();
   }
 
   /// Send a mouse event at [offset] with [button] being currently in [buttonState].
@@ -519,7 +524,8 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     int firstLine,
     int lastLine,
   ) {
-    for (final segment in selection.toSegments()) {
+    final segments = selection.toSegments();
+    for (final segment in segments) {
       if (segment.line >= _terminal.buffer.lines.length) {
         break;
       }
@@ -534,6 +540,20 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
 
       _paintSegment(canvas, segment, _painter.theme.selection);
     }
+
+    // Paint selection cursor
+    // if (_shouldShowCursor && _focusNode.hasFocus) {
+    // }
+    final startOffset = Offset(
+      selection.begin.x * _painter.cellSize.width,
+      selection.begin.y * _painter.cellSize.height + _lineOffset,
+    );
+    _painter.paintSelectionCursor(canvas, startOffset, 2);
+    final endOffset = Offset(
+      selection.end.x * _painter.cellSize.width,
+      selection.end.y * _painter.cellSize.height + _lineOffset,
+    );
+    _painter.paintSelectionCursor(canvas, endOffset, 2);
   }
 
   void _paintHighlights(

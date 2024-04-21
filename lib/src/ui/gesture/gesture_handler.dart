@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:xterm/src/core/buffer/cell_offset.dart';
+import 'package:xterm/src/core/buffer/range_line.dart';
 import 'package:xterm/src/core/mouse/button.dart';
 import 'package:xterm/src/core/mouse/button_state.dart';
 import 'package:xterm/src/terminal_view.dart';
@@ -25,31 +26,22 @@ class TerminalGestureHandler extends StatefulWidget {
     this.readOnly = false,
     this.viewOffset = Offset.zero,
     this.showToolbar = true,
+    this.cursorColor = Colors.cyan,
   });
 
   final TerminalViewState terminalView;
-
   final TerminalController terminalController;
-
   final Widget? child;
-
   final GestureTapUpCallback? onTapUp;
-
   final GestureTapDownCallback? onTapDown;
-
   final GestureTapDownCallback? onSecondaryTapDown;
-
   final GestureTapUpCallback? onSecondaryTapUp;
-
   final GestureTapDownCallback? onTertiaryTapDown;
-
   final GestureTapUpCallback? onTertiaryTapUp;
-
   final bool readOnly;
-
   final Offset viewOffset;
-
   final bool showToolbar;
+  final Color cursorColor;
 
   @override
   State<TerminalGestureHandler> createState() => _TerminalGestureHandlerState();
@@ -62,15 +54,16 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
 
   RenderTerminal get renderTerminal => terminalView.renderTerminal;
 
-  CellOffset? _lastCellOffset;
+  BufferRangeLine? _selectedRange;
+  bool? _isMovingStartCursor;
 
   late double _originTextSize = terminalView.widget.textStyle.fontSize;
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
+    final child = GestureDetector(
       child: widget.child,
-      onTapUp: widget.onTapUp,
+      onTapUp: onTapUp,
       onTapDown: onTapDown,
       onSecondaryTapDown: onSecondaryTapDown,
       onSecondaryTapUp: onSecondaryTapUp,
@@ -81,6 +74,7 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
       onScaleStart: onScaleStart,
       onScaleUpdate: onScaleUpdate,
     );
+    return child;
   }
 
   @override
@@ -135,8 +129,31 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
     }
   }
 
+  void onTapUp(TapUpDetails details) {
+    widget.onTapUp?.call(details);
+
+    final cellOffset = renderTerminal.getCellOffset(details.localPosition);
+    if (_selectedRange != null) {
+      if (_selectedRange!.contains(cellOffset) && !_menuController.isShown) {
+        _showCopyToolbar(details.globalPosition);
+      } else {
+        _hideCopyToolbar();
+      }
+    } else {
+      _hideCopyToolbar();
+    }
+  }
+
   void onTapDown(TapDownDetails details) {
-    _hideCopyToolbar();
+    final cellOffset = renderTerminal.getCellOffset(details.localPosition);
+    if (_selectedRange != null) {
+      if (!_selectedRange!.contains(cellOffset)) {
+        _selectedRange = null;
+        renderTerminal.clearSelection();
+      }
+    } else {
+      renderTerminal.clearSelection();
+    }
 
     // onTapDown is special, as it will always call the supplied callback.
     // The TerminalView depends on it to bring the terminal into focus.
@@ -168,14 +185,12 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
     renderTerminal.selectWord(
       renderTerminal.getCellOffset(details.localPosition),
     );
-    _showCopyToolbar(details.globalPosition);
+    _showCopyToolbar(details.localPosition);
   }
 
   void _showCopyToolbar(Offset position) {
     final selected = renderTerminal.selectedText;
-    if (selected == null) {
-      return;
-    }
+    if (selected == null) return;
 
     if (selected.trim().isNotEmpty) {
       _menuController.show(
@@ -184,6 +199,13 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
           return TextSelectionToolbar(
             anchorAbove: position,
             anchorBelow: position,
+            toolbarBuilder: (context, child) {
+              return Material(
+                elevation: 1.0,
+                borderRadius: BorderRadius.circular(13),
+                child: child,
+              );
+            },
             children: [
               IconButton(
                 icon: const Icon(Icons.copy),
@@ -206,24 +228,63 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
     }
   }
 
+  BufferRangeLine arroudCell(CellOffset cellOffset) {
+    return BufferRangeLine(
+      cellOffset.moveRelative(const CellOffset(-3, -1)),
+      cellOffset.moveRelative(
+        const CellOffset(3, 1),
+        maxX: terminalView.widget.terminal.viewWidth,
+        maxY: terminalView.widget.terminal.viewHeight,
+      ),
+    );
+  }
+
   void onScaleStart(ScaleStartDetails details) {
-    _lastCellOffset ??=
-        renderTerminal.getCellOffset(details.focalPoint - widget.viewOffset);
+    final cellOffset = renderTerminal.getCellOffset(details.localFocalPoint);
+    if (_selectedRange == null) {
+      _selectedRange = BufferRangeLine.collapsed(cellOffset);
+      _isMovingStartCursor = false;
+      return;
+    }
+
+    final startRange = arroudCell(_selectedRange!.begin);
+    if (startRange.contains(cellOffset)) {
+      _isMovingStartCursor = true;
+      return;
+    }
+    final endRange = arroudCell(_selectedRange!.end);
+    if (endRange.contains(cellOffset)) {
+      _isMovingStartCursor = false;
+      return;
+    }
   }
 
   void onScaleEnd(ScaleEndDetails details) {
     if (widget.showToolbar) {
-      _showCopyToolbar(renderTerminal.getOffset(_lastCellOffset!));
+      _showCopyToolbar(renderTerminal.getOffset(_selectedRange!.end));
     }
-    _lastCellOffset = null;
     _originTextSize = terminalView.textSizeNoti.value;
+    _isMovingStartCursor = null;
   }
 
   void onScaleUpdate(ScaleUpdateDetails details) {
     if (details.pointerCount == 1) {
+      final cf = renderTerminal.getCellOffset(details.localFocalPoint);
+      if (_isMovingStartCursor == true) {
+        _selectedRange = BufferRangeLine(
+          cf,
+          _selectedRange!.end,
+        );
+      } else if (_isMovingStartCursor == false) {
+        _selectedRange = BufferRangeLine(
+          _selectedRange!.begin,
+          cf,
+        );
+      }
+
       renderTerminal.selectCharacters(
-        _lastCellOffset!,
-        renderTerminal.getCellOffset(details.focalPoint - widget.viewOffset),
+        _selectedRange!.begin,
+        _selectedRange!.end,
       );
       terminalView.autoScrollDown(details);
       return;

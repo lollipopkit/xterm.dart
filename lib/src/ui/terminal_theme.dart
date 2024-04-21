@@ -3,6 +3,7 @@ import 'package:flutter/widgets.dart';
 class TerminalTheme {
   const TerminalTheme({
     required this.cursor,
+    required this.selectionCursor,
     required this.selection,
     required this.foreground,
     required this.background,
@@ -28,6 +29,7 @@ class TerminalTheme {
   });
 
   final Color cursor;
+  final Color selectionCursor;
   final Color selection;
 
   final Color foreground;

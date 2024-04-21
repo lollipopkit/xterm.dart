@@ -240,6 +240,24 @@ class TerminalPainter {
     canvas.drawRect(offset & size, paint);
   }
 
+  @pragma('vm:prefer-inline')
+  void paintSelectionCursor(Canvas canvas, Offset offset, double width) {
+    final paint = Paint()
+      ..color = _theme.selectionCursor
+      ..strokeWidth = 1;
+
+    offset = offset.translate(0, _cellSize.height * -0.25);
+    // Line
+    final size = Size(width, _cellSize.height * 1.5);
+    canvas.drawRect(offset & size, paint);
+    // Circle
+    canvas.drawCircle(
+      offset.translate(width / 2, 0),
+      3,
+      paint,
+    );
+  }
+
   /// Get the effective foreground color for a cell from information encoded in
   /// [cellColor].
   @pragma('vm:prefer-inline')

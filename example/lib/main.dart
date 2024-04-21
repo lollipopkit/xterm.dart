@@ -73,6 +73,8 @@ class _HomeState extends State<Home> {
         .transform(Utf8Decoder())
         .listen(terminal.write);
 
+    terminal.write('starting $shell\r\n' * 30);
+
     pty.exitCode.then((code) {
       terminal.write('the process exited with exit code $code');
     });

@@ -378,15 +378,13 @@ class TerminalViewState extends State<TerminalView> {
   }
 
   void _onTapDown(TapDownDetails details) {
-    if (_controller.selection != null) {
-      _controller.clearSelection();
-    } else {
-      if (!widget.hardwareKeyboardOnly) {
-        _customTextEditKey.currentState?.requestKeyboard();
-      } else {
-        _focusNode.requestFocus();
-      }
-    }
+    // if (_controller.selection == null) {
+    //   if (!widget.hardwareKeyboardOnly) {
+    //     _customTextEditKey.currentState?.requestKeyboard();
+    //   } else {
+    //     _focusNode.requestFocus();
+    //   }
+    // }
     widget.terminal.mouseInput(
       TerminalMouseButton.left,
       TerminalMouseButtonState.down,
