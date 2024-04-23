@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -56,6 +57,7 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
 
   BufferRangeLine? _selectedRange;
   bool? _isMovingStartCursor;
+  Timer? _longPressTimer;
 
   late double _originTextSize = terminalView.widget.textStyle.fontSize;
 
@@ -145,15 +147,18 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
   }
 
   void onTapDown(TapDownDetails details) {
-    final cellOffset = renderTerminal.getCellOffset(details.localPosition);
-    if (_selectedRange != null) {
-      if (!_selectedRange!.contains(cellOffset)) {
-        _selectedRange = null;
+    _longPressTimer = Timer(const Duration(milliseconds: 77), () {
+      final cellOffset = renderTerminal.getCellOffset(details.localPosition);
+      final selected = _selectedRange;
+      if (selected != null) {
+        if (!selected.contains(cellOffset)) {
+          _selectedRange = null;
+          renderTerminal.clearSelection();
+        }
+      } else {
         renderTerminal.clearSelection();
       }
-    } else {
-      renderTerminal.clearSelection();
-    }
+    });
 
     // onTapDown is special, as it will always call the supplied callback.
     // The TerminalView depends on it to bring the terminal into focus.
@@ -240,6 +245,9 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
   }
 
   void onScaleStart(ScaleStartDetails details) {
+    _longPressTimer?.cancel();
+    _longPressTimer = null;
+
     final cellOffset = renderTerminal.getCellOffset(details.localFocalPoint);
     if (_selectedRange == null) {
       _selectedRange = BufferRangeLine.collapsed(cellOffset);
