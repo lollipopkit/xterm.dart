@@ -358,6 +358,20 @@ class TerminalViewState extends State<TerminalView> {
     _customTextEditKey.currentState?.closeKeyboard();
   }
 
+  void unFocus() {
+    _focusNode.unfocus();
+    _customTextEditKey.currentState?.closeKeyboard();
+  }
+
+  void toggleFocus() {
+    _customTextEditKey.currentState?.toggleKeyboard();
+    if (_focusNode.hasFocus) {
+      _focusNode.unfocus();
+    } else {
+      _focusNode.requestFocus();
+    }
+  }
+
   Rect get cursorRect {
     return renderTerminal.cursorOffset & renderTerminal.cellSize;
   }
@@ -378,13 +392,14 @@ class TerminalViewState extends State<TerminalView> {
   }
 
   void _onTapDown(TapDownDetails details) {
-    // if (_controller.selection == null) {
-    //   if (!widget.hardwareKeyboardOnly) {
-    //     _customTextEditKey.currentState?.requestKeyboard();
-    //   } else {
-    //     _focusNode.requestFocus();
-    //   }
-    // }
+    if (_controller.selection == null) {
+      if (!widget.hardwareKeyboardOnly) {
+        _customTextEditKey.currentState?.requestKeyboard();
+      } else {
+        _focusNode.requestFocus();
+      }
+    }
+    
     widget.terminal.mouseInput(
       TerminalMouseButton.left,
       TerminalMouseButtonState.down,
@@ -485,8 +500,8 @@ class TerminalViewState extends State<TerminalView> {
     final position = _scrollableKey.currentState?.position;
     if (position == null) return;
     final notBottom = position.pixels < position.maxScrollExtent;
-    final shouldScrollDown =
-        details.localFocalPoint.dy > renderTerminal.size.height - scrollThrshold;
+    final shouldScrollDown = details.localFocalPoint.dy >
+        renderTerminal.size.height - scrollThrshold;
     if (shouldScrollDown && notBottom) {
       position.animateTo(
         position.pixels + scrollThrshold,

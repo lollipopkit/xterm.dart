@@ -239,7 +239,8 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
       cellOffset.moveRelative(
         const CellOffset(3, 1),
         maxX: terminalView.widget.terminal.viewWidth,
-        maxY: terminalView.widget.terminal.viewHeight,
+        // Comment this line due to y should not be constrainted
+        // maxY: terminalView.widget.terminal.viewHeight,
       ),
     );
   }

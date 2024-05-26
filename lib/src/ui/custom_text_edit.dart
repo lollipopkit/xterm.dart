@@ -101,6 +101,14 @@ class CustomTextEditState extends State<CustomTextEdit> with TextInputClient {
     }
   }
 
+  void toggleKeyboard() {
+    if (hasInputConnection) {
+      _connection?.close();
+    } else {
+      requestKeyboard();
+    }
+  }
+
   void setEditingState(TextEditingValue value) {
     _currentEditingState = value;
     _connection?.setEditingState(value);

@@ -73,7 +73,15 @@ class _HomeState extends State<Home> {
         .transform(Utf8Decoder())
         .listen(terminal.write);
 
-    terminal.write('starting $shell\r\n' * 30);
+    /// It's better for debugging the [CellOffset]
+    for (var i = 1; i < 70; i++) {
+      terminal.write('$i');
+      final iWidth = i.toString().length;
+      terminal.write(' ');
+      for (var j = iWidth + 1; j < terminal.viewWidth; j++) {
+        terminal.write('${j % 10}');
+      }
+    }
 
     pty.exitCode.then((code) {
       terminal.write('the process exited with exit code $code');
