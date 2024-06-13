@@ -264,7 +264,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
   /// In order to better mobile experience, we need to find the word boundary
   /// in the range of [y, y+1, y-1] lines sequentially.
   /// But we should check y>0 before y-1 and y<terminalHeight before y+1.
-  void selectWord(CellOffset from, [CellOffset? to]) {
+  BufferRangeLine? selectWord(CellOffset from, [CellOffset? to]) {
     BufferRangeLine? fromBoundary;
 
     /// Toleration for the point position is not accurate.
@@ -273,7 +273,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
       fromBoundary = _terminal.buffer.getWordBoundary(fromOffset);
       if (fromBoundary != null) break;
     }
-    if (fromBoundary == null) return;
+    if (fromBoundary == null) return null;
 
     if (to == null) {
       _controller.setSelection(
@@ -281,6 +281,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
         _terminal.buffer.createAnchorFromOffset(fromBoundary.end),
         mode: SelectionMode.line,
       );
+      return fromBoundary;
     } else {
       /// Same as find [fromBoundary]
       BufferRangeLine? toBoundary;
@@ -289,7 +290,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
         toBoundary = _terminal.buffer.getWordBoundary(toOffset);
         if (toBoundary != null) break;
       }
-      if (toBoundary == null) return;
+      if (toBoundary == null) return null;
 
       final range = fromBoundary.merge(toBoundary);
       _controller.setSelection(
@@ -297,6 +298,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
         _terminal.buffer.createAnchorFromOffset(range.end),
         mode: SelectionMode.line,
       );
+      return range;
     }
   }
 

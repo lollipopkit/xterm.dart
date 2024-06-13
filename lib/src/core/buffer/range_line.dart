@@ -45,6 +45,18 @@ class BufferRangeLine extends BufferRange {
     return BufferRangeLine(begin, end);
   }
 
+  CellOffset distanceTo(CellOffset offset) {
+    final self = normalized;
+    final center = CellOffset(
+      (self.begin.x + self.end.x) ~/ 2,
+      (self.begin.y + self.end.y) ~/ 2,
+    );
+
+    if (center.isEqual(offset)) return CellOffset(0, 0);
+  
+    return CellOffset(offset.x - center.x, offset.y - center.y);
+  }
+
   @override
   operator ==(Object other) {
     if (identical(this, other)) {

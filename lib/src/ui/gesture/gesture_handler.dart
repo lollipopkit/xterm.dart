@@ -187,9 +187,10 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
   }
 
   void onDoubleTapDown(TapDownDetails details) {
-    renderTerminal.selectWord(
+    final range = renderTerminal.selectWord(
       renderTerminal.getCellOffset(details.localPosition),
     );
+    _selectedRange = range;
     _showCopyToolbar(details.localPosition);
   }
 
@@ -233,18 +234,6 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
     }
   }
 
-  BufferRangeLine arroudCell(CellOffset cellOffset) {
-    return BufferRangeLine(
-      cellOffset.moveRelative(const CellOffset(-3, -1)),
-      cellOffset.moveRelative(
-        const CellOffset(3, 1),
-        maxX: terminalView.widget.terminal.viewWidth,
-        // Comment this line due to y should not be constrainted
-        // maxY: terminalView.widget.terminal.viewHeight,
-      ),
-    );
-  }
-
   void onScaleStart(ScaleStartDetails details) {
     _longPressTimer?.cancel();
     _longPressTimer = null;
@@ -256,16 +245,8 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
       return;
     }
 
-    final startRange = arroudCell(_selectedRange!.begin);
-    if (startRange.contains(cellOffset)) {
-      _isMovingStartCursor = true;
-      return;
-    }
-    final endRange = arroudCell(_selectedRange!.end);
-    if (endRange.contains(cellOffset)) {
-      _isMovingStartCursor = false;
-      return;
-    }
+    final offsetDiff = _selectedRange!.distanceTo(cellOffset);
+    _isMovingStartCursor = offsetDiff.isBefore(CellOffset(0, 0));
   }
 
   void onScaleEnd(ScaleEndDetails details) {

@@ -79,7 +79,12 @@ class _HomeState extends State<Home> {
       final iWidth = i.toString().length;
       terminal.write(' ');
       for (var j = iWidth + 1; j < terminal.viewWidth; j++) {
-        terminal.write('${j % 10}');
+        final surplus = j % 10;
+        if (surplus == 0) {
+          terminal.write(' ');
+          continue;
+        }
+        terminal.write('$surplus');
       }
     }
 
