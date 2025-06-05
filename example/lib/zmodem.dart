@@ -164,8 +164,9 @@ class _MyHomePageState extends State<MyHomePage> {
     return CupertinoPageScaffold(
       navigationBar: CupertinoNavigationBar(
         middle: Text(title),
-        backgroundColor:
-            CupertinoTheme.of(context).barBackgroundColor.withOpacity(0.5),
+        backgroundColor: CupertinoTheme.of(context)
+            .barBackgroundColor
+            .withValues(alpha: 0.5),
       ),
       child: TerminalView(terminal),
     );

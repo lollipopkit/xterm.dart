@@ -4,8 +4,8 @@ version: 4.0.0
 homepage: https://github.com/TerminalStudio/xterm.dart
 
 environment:
-  sdk: ">=3.0.0 <4.0.0"
-  flutter: ">=3.19.0"
+  sdk: ">=3.8.0 <4.0.0"
+  flutter: ">=3.32.0"
 
 dependencies:
   convert: ^3.0.0
@@ -20,8 +20,7 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   test: ^1.6.5
-  lints: ^3.0.0
-  dart_code_metrics: ^5.0.0
+  lints: ^6.0.0
   mockito: ^5.3.1
   build_runner: ^2.1.1
 

@@ -239,7 +239,7 @@ class TerminalViewState extends State<TerminalView> {
       viewportBuilder: (context, offset) {
         return ValueListenableBuilder(
           valueListenable: textSizeNoti,
-          builder: (_, textSize, __) {
+          builder: (_, textSize, _) {
             return _TerminalView(
               key: _viewportKey,
               terminal: widget.terminal,
@@ -262,10 +262,7 @@ class TerminalViewState extends State<TerminalView> {
     );
 
     if (!widget.hideScrollBar) {
-      child = Scrollbar(
-        controller: _scrollController,
-        child: child,
-      );
+      child = Scrollbar(controller: _scrollController, child: child);
     }
 
     child = TerminalScrollGestureHandler(
@@ -328,21 +325,22 @@ class TerminalViewState extends State<TerminalView> {
       terminalController: _controller,
       onTapUp: _onTapUp,
       onTapDown: _onTapDown,
-      onSecondaryTapDown:
-          widget.onSecondaryTapDown != null ? _onSecondaryTapDown : null,
-      onSecondaryTapUp:
-          widget.onSecondaryTapUp != null ? _onSecondaryTapUp : null,
+      onSecondaryTapDown: widget.onSecondaryTapDown != null
+          ? _onSecondaryTapDown
+          : null,
+      onSecondaryTapUp: widget.onSecondaryTapUp != null
+          ? _onSecondaryTapUp
+          : null,
       readOnly: widget.readOnly,
       child: child,
     );
 
-    child = MouseRegion(
-      cursor: widget.mouseCursor,
-      child: child,
-    );
+    child = MouseRegion(cursor: widget.mouseCursor, child: child);
 
     child = Container(
-      color: widget.theme.background.withOpacity(widget.backgroundOpacity),
+      color: widget.theme.background.withValues(
+        alpha: widget.backgroundOpacity,
+      ),
       padding: widget.padding,
       child: child,
     );
@@ -399,7 +397,7 @@ class TerminalViewState extends State<TerminalView> {
         _focusNode.requestFocus();
       }
     }
-    
+
     widget.terminal.mouseInput(
       TerminalMouseButton.left,
       TerminalMouseButtonState.down,
@@ -500,7 +498,8 @@ class TerminalViewState extends State<TerminalView> {
     final position = _scrollableKey.currentState?.position;
     if (position == null) return;
     final notBottom = position.pixels < position.maxScrollExtent;
-    final shouldScrollDown = details.localFocalPoint.dy >
+    final shouldScrollDown =
+        details.localFocalPoint.dy >
         renderTerminal.size.height - scrollThrshold;
     if (shouldScrollDown && notBottom) {
       position.animateTo(
