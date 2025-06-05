@@ -54,6 +54,7 @@
 - 🎨 Allows changing **theme** at runtime.
 - 💪 Better **performance**. No tree rebuilds anymore.
 - 🈂️ Works with **IMEs**.
+- 📋 Provides a native-style **context menu** on long press.
 
 ## Getting Started
 

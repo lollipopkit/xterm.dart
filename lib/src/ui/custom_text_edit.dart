@@ -2,6 +2,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'package:flutter/widgets.dart' show ContextMenuButtonItem, ContextMenuController, TextSelectionToolbarAnchors, AdaptiveTextSelectionToolbar, PasteTextIntent, SelectionChangedCause;
+
 class CustomTextEdit extends StatefulWidget {
   CustomTextEdit({
     super.key,
@@ -43,6 +45,9 @@ class CustomTextEdit extends StatefulWidget {
 
 class CustomTextEditState extends State<CustomTextEdit> with TextInputClient {
   TextInputConnection? _connection;
+  final ContextMenuController _menuController = ContextMenuController();
+  Rect _editableRect = Rect.zero;
+  Rect _caretRect = Rect.zero;
 
   @override
   void initState() {
@@ -115,6 +120,9 @@ class CustomTextEditState extends State<CustomTextEdit> with TextInputClient {
   }
 
   void setEditableRect(Rect rect, Rect caretRect) {
+    _editableRect = rect;
+    _caretRect = caretRect;
+
     if (!hasInputConnection) {
       return;
     }
@@ -243,6 +251,11 @@ class CustomTextEditState extends State<CustomTextEdit> with TextInputClient {
   }
 
   @override
+  void insertContent(KeyboardInsertedContent content) {
+    // TODO: handle content insertion from Android keyboard if necessary
+  }
+
+  @override
   void updateFloatingCursor(RawFloatingCursorPoint point) {
     // print('updateFloatingCursor $point');
   }
@@ -263,6 +276,12 @@ class CustomTextEditState extends State<CustomTextEdit> with TextInputClient {
   }
 
   @override
+  void didChangeInputControl(
+      TextInputControl? oldControl, TextInputControl? newControl) {
+    // print('didChangeInputControl');
+  }
+
+  @override
   void insertTextPlaceholder(Size size) {
     // print('insertTextPlaceholder');
   }
@@ -273,7 +292,40 @@ class CustomTextEditState extends State<CustomTextEdit> with TextInputClient {
   }
 
   @override
+  void performSelector(String selectorName) {
+    // print('performSelector $selectorName');
+  }
+
+  @override
   void showToolbar() {
-    // print('showToolbar');
+    if (_menuController.isShown) {
+      return;
+    }
+
+    final anchors = TextSelectionToolbarAnchors(
+      primaryAnchor: _caretRect.bottomLeft,
+      secondaryAnchor: _caretRect.topRight,
+    );
+
+    _menuController.show(
+      context: context,
+      contextMenuBuilder: (context) {
+        return AdaptiveTextSelectionToolbar.buttonItems(
+          anchors: anchors,
+          buttonItems: [
+            ContextMenuButtonItem(
+              onPressed: () {
+                Actions.invoke(
+                  context,
+                  const PasteTextIntent(SelectionChangedCause.toolbar),
+                );
+                _menuController.remove();
+              },
+              label: MaterialLocalizations.of(context).pasteButtonLabel,
+            ),
+          ],
+        );
+      },
+    );
   }
 }
