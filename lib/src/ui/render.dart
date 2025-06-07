@@ -35,21 +35,21 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     required bool alwaysShowCursor,
     EditableRectCallback? onEditableRect,
     String? composingText,
-  })  : _terminal = terminal,
-        _controller = controller,
-        _offset = offset,
-        _padding = padding,
-        _autoResize = autoResize,
-        _focusNode = focusNode,
-        _cursorType = cursorType,
-        _alwaysShowCursor = alwaysShowCursor,
-        _onEditableRect = onEditableRect,
-        _composingText = composingText,
-        _painter = TerminalPainter(
-          theme: theme,
-          textStyle: textStyle,
-          textScaler: textScaler,
-        );
+  }) : _terminal = terminal,
+       _controller = controller,
+       _offset = offset,
+       _padding = padding,
+       _autoResize = autoResize,
+       _focusNode = focusNode,
+       _cursorType = cursorType,
+       _alwaysShowCursor = alwaysShowCursor,
+       _onEditableRect = onEditableRect,
+       _composingText = composingText,
+       _painter = TerminalPainter(
+         theme: theme,
+         textStyle: textStyle,
+         textScaler: textScaler,
+       );
 
   Terminal _terminal;
   set terminal(Terminal terminal) {
@@ -509,9 +509,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
       _painter.cellSize.height,
       PlaceholderAlignment.middle,
     );
-    builder.pushStyle(
-      style.getTextStyle(textScaler: _painter.textScaler),
-    );
+    builder.pushStyle(style.getTextStyle(textScaler: _painter.textScaler));
     builder.addText(composingText);
 
     final paragraph = builder.build();
@@ -519,6 +517,8 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
 
     canvas.drawParagraph(paragraph, Offset(0, offset.dy));
   }
+
+  // RenderTerminal 中的 _paintSelection 方法更新版本
 
   void _paintSelection(
     Canvas canvas,
@@ -543,19 +543,76 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
       _paintSegment(canvas, segment, _painter.theme.selection);
     }
 
-    // Paint selection cursor
-    // if (_shouldShowCursor && _focusNode.hasFocus) {
-    // }
-    final startOffset = Offset(
-      selection.begin.x * _painter.cellSize.width,
-      selection.begin.y * _painter.cellSize.height + _lineOffset,
-    );
-    _painter.paintSelectionCursor(canvas, startOffset, 2);
-    final endOffset = Offset(
-      selection.end.x * _painter.cellSize.width,
-      selection.end.y * _painter.cellSize.height + _lineOffset,
-    );
-    _painter.paintSelectionCursor(canvas, endOffset, 2);
+    // 绘制动画选区 cursor
+    _paintAnimatedSelectionCursors(canvas, selection);
+  }
+
+  void _paintAnimatedSelectionCursors(Canvas canvas, BufferRange selection) {
+    final animation = _controller.selectionAnimation;
+
+    if (animation != null) {
+      // 获取动画参数
+      final scale = animation.scaleAnimation.value;
+      final positionOffset = animation.positionAnimation.value;
+
+      // 计算基础位置
+      final startBaseOffset = Offset(
+        selection.begin.x * _painter.cellSize.width,
+        selection.begin.y * _painter.cellSize.height + _lineOffset,
+      );
+
+      final endBaseOffset = Offset(
+        selection.end.x * _painter.cellSize.width,
+        selection.end.y * _painter.cellSize.height + _lineOffset,
+      );
+
+      // 应用位置动画偏移
+      final startOffset = startBaseOffset.translate(
+        positionOffset.dx * _painter.cellSize.width,
+        positionOffset.dy * _painter.cellSize.height,
+      );
+
+      final endOffset = endBaseOffset.translate(
+        positionOffset.dx * _painter.cellSize.width,
+        positionOffset.dy * _painter.cellSize.height,
+      );
+
+      // 绘制动画 cursor
+      _paintAnimatedSelectionCursor(canvas, startOffset, scale);
+      _paintAnimatedSelectionCursor(canvas, endOffset, scale);
+    } else {
+      // 无动画时的常规绘制
+      final startOffset = Offset(
+        selection.begin.x * _painter.cellSize.width,
+        selection.begin.y * _painter.cellSize.height + _lineOffset,
+      );
+
+      final endOffset = Offset(
+        selection.end.x * _painter.cellSize.width,
+        selection.end.y * _painter.cellSize.height + _lineOffset,
+      );
+
+      _painter.paintSelectionCursor(canvas, startOffset, 2);
+      _painter.paintSelectionCursor(canvas, endOffset, 2);
+    }
+  }
+
+  void _paintAnimatedSelectionCursor(
+    Canvas canvas,
+    Offset offset,
+    double scale,
+  ) {
+    canvas.save();
+
+    // 以 cursor 中心为缩放点
+    final centerOffset = offset.translate(1, _painter.cellSize.height * 0.5);
+    canvas.translate(centerOffset.dx, centerOffset.dy);
+    canvas.scale(scale);
+    canvas.translate(-centerOffset.dx, -centerOffset.dy);
+
+    _painter.paintSelectionCursor(canvas, offset, 2);
+
+    canvas.restore();
   }
 
   void _paintHighlights(

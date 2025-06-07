@@ -158,7 +158,7 @@ class TerminalView extends StatefulWidget {
   State<TerminalView> createState() => TerminalViewState();
 }
 
-class TerminalViewState extends State<TerminalView> {
+class TerminalViewState extends State<TerminalView> with TickerProviderStateMixin {
   late FocusNode _focusNode;
 
   late final ShortcutManager _shortcutManager;
@@ -183,7 +183,7 @@ class TerminalViewState extends State<TerminalView> {
   @override
   void initState() {
     _focusNode = widget.focusNode ?? FocusNode();
-    _controller = widget.controller ?? TerminalController();
+    _controller = widget.controller ?? TerminalController(vsync: this);
     _scrollController = widget.scrollController ?? ScrollController();
     _shortcutManager = ShortcutManager(
       shortcuts: widget.shortcuts ?? defaultTerminalShortcuts,
@@ -203,7 +203,7 @@ class TerminalViewState extends State<TerminalView> {
       if (oldWidget.controller == null) {
         _controller.dispose();
       }
-      _controller = widget.controller ?? TerminalController();
+      _controller = widget.controller ?? TerminalController(vsync: this);
     }
     if (oldWidget.scrollController != widget.scrollController) {
       if (oldWidget.scrollController == null) {
@@ -493,13 +493,13 @@ class TerminalViewState extends State<TerminalView> {
     }
   }
 
-  void autoScrollDown(ScaleUpdateDetails details) {
-    final scrollThrshold = renderTerminal.lineHeight * 7;
+  void autoScrollDown(Offset localPointerPosition) {
+    final scrollThrshold = renderTerminal.lineHeight * 3;
     final position = _scrollableKey.currentState?.position;
     if (position == null) return;
     final notBottom = position.pixels < position.maxScrollExtent;
     final shouldScrollDown =
-        details.localFocalPoint.dy >
+        localPointerPosition.dy >
         renderTerminal.size.height - scrollThrshold;
     if (shouldScrollDown && notBottom) {
       position.animateTo(
@@ -509,7 +509,7 @@ class TerminalViewState extends State<TerminalView> {
       );
     }
     final notTop = position.pixels > 0;
-    final shouldScrollUp = details.localFocalPoint.dy < scrollThrshold;
+    final shouldScrollUp = localPointerPosition.dy < scrollThrshold;
     if (shouldScrollUp && notTop) {
       position.animateTo(
         position.pixels - scrollThrshold,

@@ -24,9 +24,11 @@ dependencies:
   xterm:
     path: ../
 
-  dartssh2: ^2.5.0
+  dartssh2:
+    git:
+      url: https://github.com/lollipopkit/dartssh2
 
-  flutter_pty: ^0.4.0
+  flutter_pty: ^0.4.2
 
   flutter:
     sdk: flutter
