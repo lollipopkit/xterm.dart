@@ -249,7 +249,6 @@ class TerminalPainter {
 
     final scaledWidth = width * scale;
     final scaledHeight = _cellSize.height * 1.5 * scale;
-    final circleRadius = 3.0 * scale;
 
     // 调整偏移以保持中心对齐
     final adjustedOffset = offset.translate(
@@ -262,6 +261,7 @@ class TerminalPainter {
     canvas.drawRect(adjustedOffset & size, paint);
 
     // 绘制圆圈
+    final circleRadius = 4.0 * scale;
     final circleCenter = adjustedOffset.translate(scaledWidth / 2, 0);
     canvas.drawCircle(circleCenter, circleRadius, paint);
   }

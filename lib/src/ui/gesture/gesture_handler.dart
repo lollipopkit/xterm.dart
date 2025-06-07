@@ -62,6 +62,7 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
   // 拖杆相关状态
   _DragHandleType _activeDragHandle = _DragHandleType.none;
   CellOffset? _dragHandleFixedPoint; // 拖动时不变的选区端点
+  bool _isDragHandleReady = false; // 拖杆是否准备就绪（点击检测到拖杆）
 
   // 优化的容忍度设置
   static const double _handleTouchRadius = 32.0; // 增加拖杆触摸区域半径
@@ -255,6 +256,11 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
       return;
     }
 
+    // 如果之前检测到拖杆准备状态但没有实际拖动，重置状态
+    if (_isDragHandleReady && !_isDraggingHandle) {
+      _resetDragHandleState();
+    }
+
     widget.onTapUp?.call(details);
 
     final cellOffset = renderTerminal.getCellOffset(details.localPosition);
@@ -268,6 +274,7 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
       }
 
       if (_selectedRange!.contains(cellOffset)) {
+        // 点击选中区域内部，保持选择
       } else {
         // 点击选中区域外部，清除选择
         _clearSelection();
@@ -276,14 +283,48 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
   }
 
   void onTapDown(TapDownDetails details) {
-    // 延迟执行 tapDown，先等待可能的长按事件
+    // 优先检查是否点击了拖杆（如果已有选区）
+    if (_selectedRange != null && !_selectedRange!.isCollapsed) {
+      final dragHandle = _detectDragHandle(details.localPosition);
+      if (dragHandle != _DragHandleType.none) {
+        // 点击了拖杆，准备拖动状态
+        _prepareDragHandle(dragHandle);
+        // 不设置延迟的 tapDown，因为这是拖杆操作
+        return;
+      }
+    }
+
+    // 延迟执行 tapDown，先等待可能的长按或拖动事件
     _cancelPendingTapDown();
     _pendingTapDownDetails = details;
 
     _tapDownTimer = Timer(_tapDownDelay, () {
-      _executePendingTapDown();
+      // 只有在没有进入拖杆模式时才执行 tapDown
+      if (!_isDragHandleReady) {
+        _executePendingTapDown();
+      }
       _tapDownTimer = null;
     });
+  }
+
+  /// 准备拖杆拖动状态
+  void _prepareDragHandle(_DragHandleType dragHandle) {
+    _activeDragHandle = dragHandle;
+    _isDragHandleReady = true;
+    _dragHandleFixedPoint = _activeDragHandle == _DragHandleType.start
+        ? _selectedRange!.end
+        : _selectedRange!.begin;
+    
+    // 提供轻微的触觉反馈表示检测到拖杆
+    HapticFeedback.lightImpact();
+  }
+
+  /// 重置拖杆状态
+  void _resetDragHandleState() {
+    _activeDragHandle = _DragHandleType.none;
+    _isDragHandleReady = false;
+    _dragHandleFixedPoint = null;
+    _isDraggingHandle = false;
   }
 
   void onSecondaryTapDown(TapDownDetails details) {
@@ -303,8 +344,9 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
   }
 
   void onDoubleTapDown(TapDownDetails details) {
-    // 双击时取消待执行的 tapDown
+    // 双击时取消待执行的 tapDown 和拖杆状态
     _cancelPendingTapDown();
+    _resetDragHandleState();
 
     final cellOffset = renderTerminal.getCellOffset(details.localPosition);
 
@@ -325,7 +367,18 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
     // 缩放开始时取消待执行的 tapDown
     _cancelPendingTapDown();
 
-    // 检测是否是拖杆操作
+    // 优先检查是否已经准备好拖杆状态
+    if (_isDragHandleReady && _activeDragHandle != _DragHandleType.none) {
+      // 从准备状态进入实际拖动
+      _isDraggingHandle = true;
+      _longPressInitialCellOffset = null;
+      
+      // 提供拖动开始的触觉反馈
+      HapticFeedback.selectionClick();
+      return;
+    }
+
+    // 检测是否是拖杆操作（fallback，通常不应该到这里）
     _activeDragHandle = _detectDragHandle(details.localFocalPoint);
 
     if (_activeDragHandle != _DragHandleType.none && _selectedRange != null) {
@@ -340,7 +393,7 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
       HapticFeedback.selectionClick();
     } else {
       // 不是拖杆操作，处理缩放或清除选区
-      _isDraggingHandle = false;
+      _resetDragHandleState();
 
       // 如果不在选区附近，清除选区
       if (_selectedRange != null &&
@@ -349,18 +402,24 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
       }
 
       _longPressInitialCellOffset = null;
-      _activeDragHandle = _DragHandleType.none;
       _originTextSize = terminalView.textSizeNoti.value;
     }
   }
 
   void onScaleUpdate(ScaleUpdateDetails details) {
-    if (_activeDragHandle != _DragHandleType.none && _isDraggingHandle) {
+    if (_activeDragHandle != _DragHandleType.none && 
+        (_isDraggingHandle || _isDragHandleReady)) {
       // 处理拖杆拖动
+      if (!_isDraggingHandle) {
+        // 从准备状态进入拖动状态
+        _isDraggingHandle = true;
+        HapticFeedback.selectionClick();
+      }
       _handleDragUpdate(details.localFocalPoint);
     } else if (details.pointerCount == 2 &&
         details.scale != 1.0 &&
-        !_isDraggingHandle) {
+        !_isDraggingHandle &&
+        !_isDragHandleReady) {
       // 处理双指缩放
       _handleZoomUpdate(details);
     }
@@ -369,17 +428,13 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
   void onScaleEnd(ScaleEndDetails details) {
     if (_activeDragHandle != _DragHandleType.none && _isDraggingHandle) {
       // 拖杆拖动结束
-
-      // 提供触觉反馈
       HapticFeedback.selectionClick();
-    } else if (!_isDraggingHandle) {
+    } else if (!_isDraggingHandle && !_isDragHandleReady) {
       // 缩放结束
       _originTextSize = terminalView.textSizeNoti.value;
     }
 
-    _activeDragHandle = _DragHandleType.none;
-    _dragHandleFixedPoint = null;
-    _isDraggingHandle = false;
+    _resetDragHandleState();
   }
 
   void _handleDragUpdate(Offset localPosition) {
@@ -447,62 +502,30 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
   void _clearSelection() {
     _selectedRange = null;
     renderTerminal.clearSelection();
-  }
-
-  /// 检测距离最近的拖杆
-  _DragHandleType _detectNearestDragHandle(Offset localPosition) {
-    if (_selectedRange == null || _selectedRange!.isCollapsed) {
-      return _DragHandleType.none;
-    }
-
-    final startOffset = renderTerminal.getOffset(_selectedRange!.begin);
-    final endOffset = renderTerminal.getOffset(_selectedRange!.end);
-    final cellSize = renderTerminal.cellSize;
-
-    final startHandleCenter = startOffset + Offset(0, cellSize.height / 2);
-    final endHandleCenter =
-        endOffset + Offset(cellSize.width, cellSize.height / 2);
-
-    final distanceToStart = (localPosition - startHandleCenter).distance;
-    final distanceToEnd = (localPosition - endHandleCenter).distance;
-
-    // 添加距离限制，但使用更大的范围以便长按操作
-    const double longPressRadius = _handleTouchRadius * 1.5;
-
-    if (distanceToStart <= longPressRadius ||
-        distanceToEnd <= longPressRadius) {
-      return distanceToStart <= distanceToEnd
-          ? _DragHandleType.start
-          : _DragHandleType.end;
-    }
-
-    return _DragHandleType.none;
+    _resetDragHandleState();
   }
 
   void _onLongPressStart(LongPressStartDetails details) {
     // 长按开始时取消待执行的 tapDown
     _cancelPendingTapDown();
 
-    // 如果已存在选区，根据触摸位置选择最近的拖杆进行拖动
+    // 如果已经在拖杆准备状态，不处理长按
+    if (_isDragHandleReady) {
+      return;
+    }
+
+    // 长按只用于初始化选区，不处理已有选区的调整
     if (_selectedRange != null && !_selectedRange!.isCollapsed) {
-      _activeDragHandle = _detectNearestDragHandle(details.localPosition);
-
-      if (_activeDragHandle != _DragHandleType.none) {
-        // 设置固定点为另一端的拖杆
-        _dragHandleFixedPoint = _activeDragHandle == _DragHandleType.start
-            ? _selectedRange!.end
-            : _selectedRange!.begin;
-
-        // 清除长按初始位置，因为我们现在使用拖杆模式
-        _longPressInitialCellOffset = null;
-
-        // 提供触觉反馈
-        HapticFeedback.selectionClick();
+      // 如果点击在选区外，清除选区并重新开始
+      if (!_isNearSelection(details.localPosition)) {
+        _clearSelection();
+      } else {
+        // 在选区内或附近的长按不做处理
         return;
       }
     }
 
-    // 如果没有选区或不在选区附近，执行原有的长按逻辑
+    // 执行原有的长按逻辑 - 仅用于初始化选区
     renderTerminal.clearSelection();
 
     _longPressInitialCellOffset = renderTerminal.getCellOffset(
@@ -513,19 +536,19 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
     renderTerminal.selectCharacters(_selectedRange!.begin, _selectedRange!.end);
 
     // 重置拖杆状态
-    _activeDragHandle = _DragHandleType.none;
-    _dragHandleFixedPoint = null;
+    _resetDragHandleState();
+
+    // 提供长按反馈
+    HapticFeedback.lightImpact();
   }
 
   void _onLongPressMoveUpdate(LongPressMoveUpdateDetails details) {
-    // 优先处理拖杆拖动
-    if (_activeDragHandle != _DragHandleType.none &&
-        _dragHandleFixedPoint != null) {
-      _handleDragUpdate(details.localPosition);
+    // 如果在拖杆模式，不处理长按移动
+    if (_isDragHandleReady || _isDraggingHandle) {
       return;
     }
 
-    // 处理传统的长按拖动选择
+    // 处理传统的长按拖动选择（仅用于初始化选区）
     if (_longPressInitialCellOffset == null) {
       return;
     }
@@ -557,17 +580,15 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
   }
 
   void _onLongPressEnd(LongPressEndDetails details) {
-    // 如果是拖杆拖动，提供结束反馈并清理状态
-    if (_activeDragHandle != _DragHandleType.none) {
-      HapticFeedback.selectionClick();
-      _activeDragHandle = _DragHandleType.none;
-      _dragHandleFixedPoint = null;
-    }
-
-    if (widget.showToolbar &&
-        _selectedRange != null &&
-        !_selectedRange!.isCollapsed) {
-      // pass
+    // 长按结束只处理初始选区创建的情况
+    if (_longPressInitialCellOffset != null) {
+      _longPressInitialCellOffset = null;
+      
+      if (widget.showToolbar &&
+          _selectedRange != null &&
+          !_selectedRange!.isCollapsed) {
+        // 显示工具栏逻辑
+      }
     }
   }
 }
