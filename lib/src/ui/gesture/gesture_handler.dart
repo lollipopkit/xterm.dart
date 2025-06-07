@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -56,8 +55,7 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
   RenderTerminal get renderTerminal => terminalView.renderTerminal;
 
   BufferRangeLine? _selectedRange;
-  bool? _isMovingStartCursor;
-  Timer? _longPressTimer;
+  CellOffset? _longPressInitialCellOffset; 
 
   late double _originTextSize = terminalView.widget.textStyle.fontSize;
 
@@ -69,12 +67,15 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
       onTapDown: onTapDown,
       onSecondaryTapDown: onSecondaryTapDown,
       onSecondaryTapUp: onSecondaryTapUp,
-      onTertiaryTapDown: onSecondaryTapDown,
-      onTertiaryTapUp: onSecondaryTapUp,
+      onTertiaryTapDown: widget.onTertiaryTapDown, // Corrected to use widget's prop
+      onTertiaryTapUp: widget.onTertiaryTapUp,     // Corrected to use widget's prop
       onDoubleTapDown: onDoubleTapDown,
       onScaleEnd: onScaleEnd,
       onScaleStart: onScaleStart,
       onScaleUpdate: onScaleUpdate,
+      onLongPressStart: _onLongPressStart,
+      onLongPressMoveUpdate: _onLongPressMoveUpdate,
+      onLongPressEnd: _onLongPressEnd,
     );
     return child;
   }
@@ -135,31 +136,26 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
     widget.onTapUp?.call(details);
 
     final cellOffset = renderTerminal.getCellOffset(details.localPosition);
+
     if (_selectedRange != null) {
-      if (_selectedRange!.contains(cellOffset) && !_menuController.isShown) {
-        _showCopyToolbar(details.globalPosition);
+      if (_selectedRange!.contains(cellOffset)) {
+        // Tap inside existing selection
+        if (!_menuController.isShown) {
+          _showCopyToolbar(details.globalPosition);
+        }
       } else {
+        // Tap outside existing selection
+        _selectedRange = null;
+        renderTerminal.clearSelection();
         _hideCopyToolbar();
       }
     } else {
+      // No selection, ensure toolbar is hidden
       _hideCopyToolbar();
     }
   }
 
   void onTapDown(TapDownDetails details) {
-    _longPressTimer = Timer(const Duration(milliseconds: 77), () {
-      final cellOffset = renderTerminal.getCellOffset(details.localPosition);
-      final selected = _selectedRange;
-      if (selected != null) {
-        if (!selected.contains(cellOffset)) {
-          _selectedRange = null;
-          renderTerminal.clearSelection();
-        }
-      } else {
-        renderTerminal.clearSelection();
-      }
-    });
-
     // onTapDown is special, as it will always call the supplied callback.
     // The TerminalView depends on it to bring the terminal into focus.
     _tapDown(
@@ -235,58 +231,73 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
   }
 
   void onScaleStart(ScaleStartDetails details) {
-    _longPressTimer?.cancel();
-    _longPressTimer = null;
-
-    final cellOffset = renderTerminal.getCellOffset(details.localFocalPoint);
-    if (_selectedRange == null) {
-      _selectedRange = BufferRangeLine.collapsed(cellOffset);
-      _isMovingStartCursor = false;
-      return;
+    // If a scale gesture (typically pinch-zoom) starts, it takes precedence over text selection.
+    if (_selectedRange != null) {
+      _selectedRange = null;
+      renderTerminal.clearSelection();
+      _hideCopyToolbar();
     }
+    _longPressInitialCellOffset = null; // Cancel any ongoing long-press selection
 
-    final offsetDiff = _selectedRange!.distanceTo(cellOffset);
-    _isMovingStartCursor = offsetDiff.isBefore(CellOffset(0, 0));
+    _originTextSize = terminalView.textSizeNoti.value;
   }
 
   void onScaleEnd(ScaleEndDetails details) {
-    if (widget.showToolbar) {
-      _showCopyToolbar(renderTerminal.getOffset(_selectedRange!.end));
-    }
+    // Toolbar showing for selection is handled by _onLongPressEnd
     _originTextSize = terminalView.textSizeNoti.value;
-    _isMovingStartCursor = null;
   }
 
   void onScaleUpdate(ScaleUpdateDetails details) {
-    if (details.pointerCount == 1) {
-      final cf = renderTerminal.getCellOffset(details.localFocalPoint);
-      if (_isMovingStartCursor == true) {
-        _selectedRange = BufferRangeLine(
-          cf,
-          _selectedRange!.end,
-        );
-      } else if (_isMovingStartCursor == false) {
-        _selectedRange = BufferRangeLine(
-          _selectedRange!.begin,
-          cf,
-        );
-      }
-
-      renderTerminal.selectCharacters(
-        _selectedRange!.begin,
-        _selectedRange!.end,
-      );
-      terminalView.autoScrollDown(details);
-      return;
-    }
-    if (details.pointerCount != 2 || details.scale == 1) {
-      return;
+    // Pinch-to-zoom logic
+    if (details.pointerCount != 2 || details.scale == 1.0) {
+      return; // Only handle 2-finger scaling
     }
     final scale = math.pow(details.scale, 0.3);
     final fontSize = _originTextSize * scale;
+    // Clamp font size
     if (fontSize < 7 || fontSize > 17) {
       return;
     }
     terminalView.textSizeNoti.value = fontSize;
+  }
+
+  void _onLongPressStart(LongPressStartDetails details) {
+    _hideCopyToolbar(); 
+    renderTerminal.clearSelection(); 
+    
+    _longPressInitialCellOffset = renderTerminal.getCellOffset(details.localPosition);
+    _selectedRange = BufferRangeLine.collapsed(_longPressInitialCellOffset!);
+    
+    renderTerminal.selectCharacters(
+      _selectedRange!.begin,
+      _selectedRange!.end,
+    );
+  }
+
+  void _onLongPressMoveUpdate(LongPressMoveUpdateDetails details) {
+    if (_longPressInitialCellOffset == null) return;
+
+    final currentCellOffset = renderTerminal.getCellOffset(details.localPosition);
+    // Determine selection direction
+    if (currentCellOffset.isBefore(_longPressInitialCellOffset!)) {
+      _selectedRange = BufferRangeLine(currentCellOffset, _longPressInitialCellOffset!);
+    } else {
+      _selectedRange = BufferRangeLine(_longPressInitialCellOffset!, currentCellOffset);
+    }
+
+    renderTerminal.selectCharacters(
+      _selectedRange!.begin,
+      _selectedRange!.end,
+    );
+
+    // Use the updated autoScrollDown method
+    terminalView.autoScrollDown(details.localPosition);
+  }
+
+  void _onLongPressEnd(LongPressEndDetails details) {
+    if (widget.showToolbar && _selectedRange != null && !_selectedRange!.isCollapsed) {
+      _showCopyToolbar(details.globalPosition);
+    }
+    // _longPressInitialCellOffset = null; // Keep for tap up logic if needed, or clear if selection is final
   }
 }
