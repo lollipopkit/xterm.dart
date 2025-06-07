@@ -47,13 +47,13 @@ class Home extends StatefulWidget {
   _HomeState createState() => _HomeState();
 }
 
-class _HomeState extends State<Home> {
+class _HomeState extends State<Home> with TickerProviderStateMixin {
   late final terminal = Terminal(
     maxLines: 10000,
     onPrivateOSC: _handlePrivateOSC,
   );
 
-  final terminalController = TerminalController();
+  late final terminalController = TerminalController(vsync: this);
 
   final terminalKey = GlobalKey<TerminalViewState>();
 

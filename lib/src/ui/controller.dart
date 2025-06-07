@@ -9,32 +9,65 @@ import 'package:xterm/src/core/buffer/range_line.dart';
 import 'package:xterm/src/ui/pointer_input.dart';
 import 'package:xterm/src/ui/selection_mode.dart';
 
+enum SelectionAnimationType {
+  insert,  // 插入新选区
+  update,  // 更新现有选区
+}
+
+class SelectionAnimation {
+  final AnimationController controller;
+  final Animation<double> scaleAnimation;
+  final Animation<Offset> positionAnimation;
+  final SelectionAnimationType type;
+  
+  SelectionAnimation({
+    required this.controller,
+    required this.scaleAnimation,
+    required this.positionAnimation,
+    required this.type,
+  });
+
+  void dispose() {
+    controller.dispose();
+  }
+}
+
 class TerminalController with ChangeNotifier {
   TerminalController({
     SelectionMode selectionMode = SelectionMode.line,
     PointerInputs pointerInputs = const PointerInputs({PointerInput.tap}),
     bool suspendPointerInput = false,
+    required TickerProvider vsync,
   })  : _selectionMode = selectionMode,
         _pointerInputs = pointerInputs,
-        _suspendPointerInputs = suspendPointerInput;
+        _suspendPointerInputs = suspendPointerInput,
+        _vsync = vsync;
 
+  final TickerProvider _vsync;
+  
   CellAnchor? _selectionBase;
   CellAnchor? _selectionExtent;
+  
+  // 动画相关状态
+  SelectionAnimation? _selectionAnimation;
+  CellOffset? _lastSelectionBegin;
+  CellOffset? _lastSelectionEnd;
 
   SelectionMode get selectionMode => _selectionMode;
   SelectionMode _selectionMode;
 
-  /// The set of pointer events which will be used as mouse input for the terminal.
   PointerInputs get pointerInput => _pointerInputs;
   PointerInputs _pointerInputs;
 
-  /// True if sending pointer events to the terminal is suspended.
   bool get suspendedPointerInputs => _suspendPointerInputs;
   bool _suspendPointerInputs;
 
   List<TerminalHighlight> get highlights => _highlights;
   final _highlights = <TerminalHighlight>[];
 
+  // 动画访问器
+  SelectionAnimation? get selectionAnimation => _selectionAnimation;
+  
   BufferRange? get selection {
     final base = _selectionBase;
     final extent = _selectionExtent;
@@ -50,10 +83,29 @@ class TerminalController with ChangeNotifier {
     return _createRange(base.offset, extent.offset);
   }
 
-  /// Set selection on the terminal from [base] to [extent]. This method takes
-  /// the ownership of [base] and [extent] and will dispose them when the
-  /// selection is cleared or changed.
   void setSelection(CellAnchor base, CellAnchor extent, {SelectionMode? mode}) {
+    final newBegin = base.offset;
+    final newEnd = extent.offset;
+    
+    // 检测是插入还是更新
+    final isNewSelection = _selectionBase == null || _selectionExtent == null;
+    final animationType = isNewSelection 
+        ? SelectionAnimationType.insert 
+        : SelectionAnimationType.update;
+
+    // 清理旧动画
+    _selectionAnimation?.dispose();
+    
+    // 创建新动画
+    _selectionAnimation = _createSelectionAnimation(
+      type: animationType,
+      oldBegin: _lastSelectionBegin,
+      oldEnd: _lastSelectionEnd,
+      newBegin: newBegin,
+      newEnd: newEnd,
+    );
+
+    // 更新选区
     _selectionBase?.dispose();
     _selectionBase = base;
 
@@ -64,7 +116,91 @@ class TerminalController with ChangeNotifier {
       _selectionMode = mode;
     }
 
+    // 记录位置用于下次动画
+    _lastSelectionBegin = newBegin;
+    _lastSelectionEnd = newEnd;
+
     notifyListeners();
+  }
+
+  SelectionAnimation _createSelectionAnimation({
+    required SelectionAnimationType type,
+    CellOffset? oldBegin,
+    CellOffset? oldEnd,
+    required CellOffset newBegin,
+    required CellOffset newEnd,
+  }) {
+    final controller = AnimationController(
+      duration: type == SelectionAnimationType.insert 
+          ? const Duration(milliseconds: 200)
+          : const Duration(milliseconds: 300),
+      vsync: _vsync,
+    );
+
+    late Animation<double> scaleAnimation;
+    late Animation<Offset> positionAnimation;
+
+    if (type == SelectionAnimationType.insert) {
+      // 插入动画：130% 缩小到 100%
+      scaleAnimation = Tween<double>(
+        begin: 1.3,
+        end: 1.0,
+      ).animate(CurvedAnimation(
+        parent: controller,
+        curve: Curves.elasticOut,
+      ));
+      
+      // 插入时位置不变
+      positionAnimation = Tween<Offset>(
+        begin: Offset.zero,
+        end: Offset.zero,
+      ).animate(controller);
+    } else {
+      // 更新动画：位置从旧位置移动到新位置
+      scaleAnimation = Tween<double>(
+        begin: 1.0,
+        end: 1.0,
+      ).animate(controller);
+
+      final beginOffset = oldBegin != null && oldBegin != newBegin
+          ? Offset(
+              (oldBegin.x - newBegin.x).toDouble(),
+              (oldBegin.y - newBegin.y).toDouble(),
+            )
+          : Offset.zero;
+
+      positionAnimation = Tween<Offset>(
+        begin: beginOffset,
+        end: Offset.zero,
+      ).animate(CurvedAnimation(
+        parent: controller,
+        curve: Curves.easeOutCubic,
+      ));
+    }
+
+    // 动画完成后清理
+    controller.addStatusListener((status) {
+      if (status == AnimationStatus.completed) {
+        _selectionAnimation?.dispose();
+        _selectionAnimation = null;
+        notifyListeners();
+      }
+    });
+
+    // 动画过程中触发重绘
+    controller.addListener(() {
+      notifyListeners();
+    });
+
+    // 启动动画
+    controller.forward();
+
+    return SelectionAnimation(
+      controller: controller,
+      scaleAnimation: scaleAnimation,
+      positionAnimation: positionAnimation,
+      type: type,
+    );
   }
 
   BufferRange _createRange(CellOffset begin, CellOffset end) {
@@ -76,53 +212,47 @@ class TerminalController with ChangeNotifier {
     }
   }
 
-  /// Controls how the terminal behaves when the user selects a range of text.
-  /// The default is [SelectionMode.line]. Setting this to [SelectionMode.block]
-  /// enables block selection mode.
   void setSelectionMode(SelectionMode newSelectionMode) {
-    // If the new mode is the same as the old mode,
-    // nothing has to be changed.
     if (_selectionMode == newSelectionMode) {
       return;
     }
-    // Set the new mode.
     _selectionMode = newSelectionMode;
     notifyListeners();
   }
 
-  /// Clears the current selection.
   void clearSelection() {
+    // 清理动画
+    _selectionAnimation?.dispose();
+    _selectionAnimation = null;
+    
     _selectionBase?.dispose();
     _selectionBase = null;
     _selectionExtent?.dispose();
     _selectionExtent = null;
+    
+    _lastSelectionBegin = null;
+    _lastSelectionEnd = null;
+    
     notifyListeners();
   }
 
-  // Select which type of pointer events are send to the terminal.
   void setPointerInputs(PointerInputs pointerInput) {
     _pointerInputs = pointerInput;
     notifyListeners();
   }
 
-  // Toggle sending pointer events to the terminal.
   void setSuspendPointerInput(bool suspend) {
     _suspendPointerInputs = suspend;
     notifyListeners();
   }
 
-  // Returns true if this type of PointerInput should be send to the Terminal.
   @internal
   bool shouldSendPointerInput(PointerInput pointerInput) {
-    // Always return false if pointer input is suspended.
     return _suspendPointerInputs
         ? false
         : _pointerInputs.inputs.contains(pointerInput);
   }
 
-  /// Creates a new highlight on the terminal from [p1] to [p2] with the given
-  /// [color]. The highlight will be removed when the returned object is
-  /// disposed.
   TerminalHighlight highlight({
     required CellAnchor p1,
     required CellAnchor p2,
@@ -145,15 +275,18 @@ class TerminalController with ChangeNotifier {
 
     return highlight;
   }
+
+  @override
+  void dispose() {
+    _selectionAnimation?.dispose();
+    super.dispose();
+  }
 }
 
 class TerminalHighlight with Disposable {
   final TerminalController owner;
-
   final CellAnchor p1;
-
   final CellAnchor p2;
-
   final Color color;
 
   TerminalHighlight(
@@ -163,8 +296,6 @@ class TerminalHighlight with Disposable {
     required this.color,
   });
 
-  /// Returns the range of the highlight. May be null if the anchors that
-  /// define the highlight are not attached to the terminal.
   BufferRange? get range {
     if (!p1.attached || !p2.attached) {
       return null;
