@@ -309,6 +309,7 @@ class CustomTextEditState extends State<CustomTextEdit>
       return;
     }
     final config = TextInputConfiguration(
+      viewId: View.of(context).viewId,
       inputType: widget.inputType,
       inputAction: widget.inputAction,
       keyboardAppearance: widget.keyboardAppearance,
