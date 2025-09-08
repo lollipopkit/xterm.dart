@@ -275,12 +275,12 @@ class CustomTextEditState extends State<CustomTextEdit>
   }
 
   KeyEventResult _onKeyEvent(FocusNode focusNode, KeyEvent event) {
-    // Only handle KeyDownEvent for custom logic if not composing.
-    // Other events (KeyUp, KeyRepeat) might be handled by the system or other listeners.
-    if (event is KeyDownEvent && _currentEditingState.composing.isCollapsed) {
+    // Handle both KeyDownEvent and KeyRepeatEvent for key repeat functionality
+    // Only process when not composing text
+    if ((event is KeyDownEvent || event is KeyRepeatEvent) && _currentEditingState.composing.isCollapsed) {
       return widget.onKeyEvent(focusNode, event);
     }
-    // Let other handlers process the event if composing or not a KeyDownEvent.
+    // Let other handlers process the event if composing or not a key down/repeat event.
     return KeyEventResult.skipRemainingHandlers;
   }
 

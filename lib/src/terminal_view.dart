@@ -458,6 +458,11 @@ class TerminalViewState extends State<TerminalView> with TickerProviderStateMixi
       return KeyEventResult.ignored;
     }
 
+    // Handle both KeyDownEvent and KeyRepeatEvent for key repeat functionality
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+      return KeyEventResult.ignored;
+    }
+
     final key = keyToTerminalKey(event.logicalKey);
 
     if (key == null) {
