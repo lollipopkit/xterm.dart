@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/cupertino.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -31,6 +33,7 @@ class TerminalGestureHandler extends StatefulWidget {
     this.viewOffset = Offset.zero,
     this.showToolbar = true,
     this.cursorColor = Colors.cyan,
+    this.scrollController,
   });
 
   final TerminalViewState terminalView;
@@ -46,6 +49,7 @@ class TerminalGestureHandler extends StatefulWidget {
   final Offset viewOffset;
   final bool showToolbar;
   final Color cursorColor;
+  final ScrollController? scrollController;
 
   @override
   State<TerminalGestureHandler> createState() => _TerminalGestureHandlerState();
@@ -79,10 +83,50 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
   TapDownDetails? _pendingTapDownDetails;
   static const Duration _tapDownDelay = Duration(milliseconds: 100); // 延迟时间
 
+  static final TextSelectionControls _materialSelectionControls =
+      MaterialTextSelectionControls();
+  static final TextSelectionControls _cupertinoSelectionControls =
+      CupertinoTextSelectionControls();
+
+  TextSelectionControls get _selectionControls {
+    switch (defaultTargetPlatform) {
+      case TargetPlatform.iOS:
+      case TargetPlatform.macOS:
+        return _cupertinoSelectionControls;
+      default:
+        return _materialSelectionControls;
+    }
+  }
+
+  ScrollController? _attachedScrollController;
+  bool _scrollUpdateScheduled = false;
+
+  bool get _shouldShowHandles =>
+      widget.showToolbar &&
+      _selectedRange != null &&
+      !_selectedRange!.isCollapsed;
+
+  @override
+  void initState() {
+    super.initState();
+    _attachScrollController(widget.scrollController);
+  }
+
   @override
   Widget build(BuildContext context) {
-    final child = GestureDetector(
-      child: widget.child,
+    Widget content = widget.child ?? const SizedBox.shrink();
+
+    final List<Widget> handles = _buildSelectionHandles();
+    if (handles.isNotEmpty) {
+      content = Stack(
+        clipBehavior: Clip.none,
+        children: <Widget>[content, ...handles],
+      );
+    }
+
+    return GestureDetector(
+      behavior: HitTestBehavior.deferToChild,
+      child: content,
       onTapUp: onTapUp,
       onTapDown: onTapDown,
       onSecondaryTapDown: onSecondaryTapDown,
@@ -97,12 +141,21 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
       onLongPressMoveUpdate: _onLongPressMoveUpdate,
       onLongPressEnd: _onLongPressEnd,
     );
-    return child;
+  }
+
+  @override
+  void didUpdateWidget(TerminalGestureHandler oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.scrollController != widget.scrollController) {
+      _detachScrollController(oldWidget.scrollController);
+      _attachScrollController(widget.scrollController);
+    }
   }
 
   @override
   void dispose() {
     _cancelPendingTapDown();
+    _detachScrollController(_attachedScrollController);
     super.dispose();
   }
 
@@ -128,6 +181,77 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
       );
       _pendingTapDownDetails = null;
     }
+  }
+
+  List<Widget> _buildSelectionHandles() {
+    if (!_shouldShowHandles) {
+      return const <Widget>[];
+    }
+
+    final BufferRangeLine range = _selectedRange!.normalized;
+    final TextDirection textDirection = Directionality.of(context);
+    final Size cellSize = renderTerminal.cellSize;
+
+    final Offset startAnchor = renderTerminal.getOffset(range.begin);
+    final Offset endAnchor =
+        renderTerminal.getOffset(range.end) +
+        Offset(cellSize.width, cellSize.height);
+
+    final TextSelectionHandleType startHandleType =
+        textDirection == TextDirection.ltr
+        ? TextSelectionHandleType.left
+        : TextSelectionHandleType.right;
+    final TextSelectionHandleType endHandleType =
+        textDirection == TextDirection.ltr
+        ? TextSelectionHandleType.right
+        : TextSelectionHandleType.left;
+
+    return <Widget>[
+      _buildHandleWidget(startAnchor, startHandleType, _DragHandleType.start),
+      _buildHandleWidget(endAnchor, endHandleType, _DragHandleType.end),
+    ];
+  }
+
+  Widget _buildHandleWidget(
+    Offset anchor,
+    TextSelectionHandleType visualType,
+    _DragHandleType dragType,
+  ) {
+    final Offset handleAnchor = _selectionControls.getHandleAnchor(
+      visualType,
+      renderTerminal.cellSize.height,
+    );
+    final Offset position = anchor - handleAnchor;
+
+    return Positioned(
+      left: position.dx,
+      top: position.dy,
+      child: Listener(
+        behavior: HitTestBehavior.translucent,
+        onPointerDown: (PointerDownEvent event) {
+          _beginHandleDrag(dragType);
+          _updateHandleDragFromGlobal(event.position);
+        },
+        onPointerMove: (PointerMoveEvent event) {
+          _updateHandleDragFromGlobal(event.position);
+        },
+        onPointerUp: (PointerUpEvent event) => _finishHandleDrag(),
+        onPointerCancel: (PointerCancelEvent event) => _finishHandleDrag(),
+        child: _selectionControls.buildHandle(
+          context,
+          visualType,
+          renderTerminal.cellSize.height,
+          widget.showToolbar
+              ? () {
+                  final Rect? rect = _currentSelectionGlobalRect();
+                  if (rect != null) {
+                    widget.terminalView.showSelectionToolbar(rect);
+                  }
+                }
+              : null,
+        ),
+      ),
+    );
   }
 
   /// 检测点击位置是否在拖杆范围内
@@ -309,14 +433,123 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
 
   /// 准备拖杆拖动状态
   void _prepareDragHandle(_DragHandleType dragHandle) {
+    if (_selectedRange == null) {
+      return;
+    }
+    final BufferRangeLine range = _selectedRange!.normalized;
     _activeDragHandle = dragHandle;
     _isDragHandleReady = true;
-    _dragHandleFixedPoint = _activeDragHandle == _DragHandleType.start
-        ? _selectedRange!.end
-        : _selectedRange!.begin;
-    
+    _dragHandleFixedPoint = dragHandle == _DragHandleType.start
+        ? range.end
+        : range.begin;
+
     // 提供轻微的触觉反馈表示检测到拖杆
     HapticFeedback.lightImpact();
+  }
+
+  void _beginHandleDrag(_DragHandleType dragHandle) {
+    if (_selectedRange == null) {
+      return;
+    }
+    final BufferRangeLine range = _selectedRange!.normalized;
+    _activeDragHandle = dragHandle;
+    _dragHandleFixedPoint = dragHandle == _DragHandleType.start
+        ? range.end
+        : range.begin;
+    _isDragHandleReady = false;
+    _isDraggingHandle = true;
+    _longPressInitialCellOffset = null;
+    if (widget.showToolbar) {
+      widget.terminalView.hideSelectionToolbar();
+    }
+    HapticFeedback.selectionClick();
+  }
+
+  void _updateHandleDragFromGlobal(Offset globalPosition) {
+    if (_activeDragHandle == _DragHandleType.none) {
+      return;
+    }
+    final Offset localPosition = renderTerminal.globalToLocal(globalPosition);
+    _handleDragUpdate(localPosition);
+  }
+
+  void _finishHandleDrag() {
+    if (_activeDragHandle == _DragHandleType.none) {
+      return;
+    }
+    if (widget.showToolbar) {
+      final Rect? rect = _currentSelectionGlobalRect();
+      if (rect != null) {
+        widget.terminalView.showSelectionToolbar(rect);
+      }
+    }
+    _resetDragHandleState();
+  }
+
+  void _onViewportChanged() {
+    if (!mounted) {
+      return;
+    }
+    if (_selectedRange == null || _selectedRange!.isCollapsed) {
+      if (widget.showToolbar && widget.terminalView.isSelectionToolbarShown) {
+        widget.terminalView.hideSelectionToolbar();
+      }
+      return;
+    }
+
+    setState(() {});
+
+    if (widget.showToolbar && widget.terminalView.isSelectionToolbarShown) {
+      final Rect? rect = _currentSelectionGlobalRect();
+      if (rect != null) {
+        widget.terminalView.showSelectionToolbar(rect);
+      }
+    }
+  }
+
+  void _handleScrollChange() {
+    if (_scrollUpdateScheduled || !mounted) {
+      return;
+    }
+    _scrollUpdateScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        _scrollUpdateScheduled = false;
+        return;
+      }
+      _scrollUpdateScheduled = false;
+      _onViewportChanged();
+    });
+  }
+
+  void _attachScrollController(ScrollController? controller) {
+    if (controller == null || controller == _attachedScrollController) {
+      return;
+    }
+    controller.addListener(_handleScrollChange);
+    _attachedScrollController = controller;
+  }
+
+  void _detachScrollController(ScrollController? controller) {
+    if (controller == null) {
+      return;
+    }
+    controller.removeListener(_handleScrollChange);
+    if (_attachedScrollController == controller) {
+      _attachedScrollController = null;
+    }
+  }
+
+  void _applySelection(BufferRangeLine range) {
+    final BufferRangeLine normalized = range.normalized;
+    renderTerminal.selectCharacters(normalized.begin, normalized.end);
+    if (_selectedRange != normalized) {
+      setState(() {
+        _selectedRange = normalized;
+      });
+    } else {
+      _selectedRange = normalized;
+    }
   }
 
   /// 重置拖杆状态
@@ -353,12 +586,19 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
     if (details.kind == PointerDeviceKind.touch) {
       final BufferRangeLine? wordRange = renderTerminal.selectWord(cellOffset);
       if (wordRange != null) {
-        _selectedRange = wordRange;
+        _applySelection(wordRange);
       }
     } else {
       renderTerminal.selectCharacters(cellOffset, cellOffset);
       if (widget.terminalController.selection != null) {
-        _selectedRange = BufferRangeLine(cellOffset, cellOffset);
+        _applySelection(BufferRangeLine(cellOffset, cellOffset));
+      }
+    }
+
+    if (widget.showToolbar) {
+      final Rect? selectionRect = _currentSelectionGlobalRect();
+      if (selectionRect != null) {
+        widget.terminalView.showSelectionToolbar(selectionRect);
       }
     }
   }
@@ -372,7 +612,10 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
       // 从准备状态进入实际拖动
       _isDraggingHandle = true;
       _longPressInitialCellOffset = null;
-      
+      if (widget.showToolbar) {
+        widget.terminalView.hideSelectionToolbar();
+      }
+
       // 提供拖动开始的触觉反馈
       HapticFeedback.selectionClick();
       return;
@@ -384,10 +627,14 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
     if (_activeDragHandle != _DragHandleType.none && _selectedRange != null) {
       // 开始拖杆操作
       _isDraggingHandle = true;
+      final BufferRangeLine range = _selectedRange!.normalized;
       _dragHandleFixedPoint = _activeDragHandle == _DragHandleType.start
-          ? _selectedRange!.end
-          : _selectedRange!.begin;
+          ? range.end
+          : range.begin;
       _longPressInitialCellOffset = null;
+      if (widget.showToolbar) {
+        widget.terminalView.hideSelectionToolbar();
+      }
 
       // 提供触觉反馈
       HapticFeedback.selectionClick();
@@ -407,7 +654,7 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
   }
 
   void onScaleUpdate(ScaleUpdateDetails details) {
-    if (_activeDragHandle != _DragHandleType.none && 
+    if (_activeDragHandle != _DragHandleType.none &&
         (_isDraggingHandle || _isDragHandleReady)) {
       // 处理拖杆拖动
       if (!_isDraggingHandle) {
@@ -429,6 +676,12 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
     if (_activeDragHandle != _DragHandleType.none && _isDraggingHandle) {
       // 拖杆拖动结束
       HapticFeedback.selectionClick();
+      if (widget.showToolbar) {
+        final Rect? rect = _currentSelectionGlobalRect();
+        if (rect != null) {
+          widget.terminalView.showSelectionToolbar(rect);
+        }
+      }
     } else if (!_isDraggingHandle && !_isDragHandleReady) {
       // 缩放结束
       _originTextSize = terminalView.textSizeNoti.value;
@@ -476,8 +729,17 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
 
     // 确保选区不为空
     if (newStart != newEnd) {
-      _selectedRange = BufferRangeLine(newStart, newEnd);
-      renderTerminal.selectCharacters(newStart, newEnd);
+      final bool draggingStart = _activeDragHandle == _DragHandleType.start;
+      if (draggingStart && currentCellOffset.isAfter(_dragHandleFixedPoint!)) {
+        _activeDragHandle = _DragHandleType.end;
+        _dragHandleFixedPoint = newStart;
+      } else if (!draggingStart &&
+          currentCellOffset.isBefore(_dragHandleFixedPoint!)) {
+        _activeDragHandle = _DragHandleType.start;
+        _dragHandleFixedPoint = newEnd;
+      }
+
+      _applySelection(BufferRangeLine(newStart, newEnd));
 
       // 自动滚动
       terminalView.autoScrollDown(localPosition);
@@ -500,9 +762,16 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
   }
 
   void _clearSelection() {
-    _selectedRange = null;
+    if (_selectedRange != null) {
+      setState(() {
+        _selectedRange = null;
+      });
+    }
     renderTerminal.clearSelection();
     _resetDragHandleState();
+    if (widget.showToolbar) {
+      widget.terminalView.hideSelectionToolbar();
+    }
   }
 
   void _onLongPressStart(LongPressStartDetails details) {
@@ -526,14 +795,13 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
     }
 
     // 执行原有的长按逻辑 - 仅用于初始化选区
-    renderTerminal.clearSelection();
+    _clearSelection();
 
     _longPressInitialCellOffset = renderTerminal.getCellOffset(
       details.localPosition,
     );
 
-    _selectedRange = BufferRangeLine.collapsed(_longPressInitialCellOffset!);
-    renderTerminal.selectCharacters(_selectedRange!.begin, _selectedRange!.end);
+    _applySelection(BufferRangeLine.collapsed(_longPressInitialCellOffset!));
 
     // 重置拖杆状态
     _resetDragHandleState();
@@ -562,19 +830,14 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
       return;
     }
 
+    final BufferRangeLine range;
     if (currentCellOffset.isBefore(_longPressInitialCellOffset!)) {
-      _selectedRange = BufferRangeLine(
-        currentCellOffset,
-        _longPressInitialCellOffset!,
-      );
+      range = BufferRangeLine(currentCellOffset, _longPressInitialCellOffset!);
     } else {
-      _selectedRange = BufferRangeLine(
-        _longPressInitialCellOffset!,
-        currentCellOffset,
-      );
+      range = BufferRangeLine(_longPressInitialCellOffset!, currentCellOffset);
     }
 
-    renderTerminal.selectCharacters(_selectedRange!.begin, _selectedRange!.end);
+    _applySelection(range);
 
     terminalView.autoScrollDown(details.localPosition);
   }
@@ -583,12 +846,33 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
     // 长按结束只处理初始选区创建的情况
     if (_longPressInitialCellOffset != null) {
       _longPressInitialCellOffset = null;
-      
+
       if (widget.showToolbar &&
           _selectedRange != null &&
           !_selectedRange!.isCollapsed) {
-        // 显示工具栏逻辑
+        final Rect? selectionRect = _currentSelectionGlobalRect();
+        if (selectionRect != null) {
+          widget.terminalView.showSelectionToolbar(selectionRect);
+        }
       }
     }
+  }
+
+  Rect? _currentSelectionGlobalRect() {
+    if (_selectedRange == null || _selectedRange!.isCollapsed) {
+      return null;
+    }
+    final Offset startLocal = renderTerminal.getOffset(_selectedRange!.begin);
+    final Offset endLocal = renderTerminal.getOffset(_selectedRange!.end);
+    final Offset endBottomRight =
+        endLocal + renderTerminal.cellSize.bottomRight(Offset.zero);
+    final Rect localRect = Rect.fromPoints(startLocal, endBottomRight);
+    final Offset globalTopLeft = renderTerminal.localToGlobal(
+      localRect.topLeft,
+    );
+    final Offset globalBottomRight = renderTerminal.localToGlobal(
+      localRect.bottomRight,
+    );
+    return Rect.fromPoints(globalTopLeft, globalBottomRight);
   }
 }

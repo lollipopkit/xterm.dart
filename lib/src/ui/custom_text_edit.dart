@@ -15,7 +15,8 @@ class CustomTextEdit extends StatefulWidget {
   final KeyEventResult Function(FocusNode, KeyEvent) onKeyEvent;
   final FocusNode focusNode;
   final TextEditingController? controller;
-  final void Function(TextSelection selection, SelectionChangedCause? cause)? onSelectionChanged;
+  final void Function(TextSelection selection, SelectionChangedCause? cause)?
+  onSelectionChanged;
   final void Function(TextRange composing)? onComposingChanged;
   final bool autofocus;
   final bool readOnly;
@@ -54,6 +55,8 @@ class CustomTextEditState extends State<CustomTextEdit>
     with TextInputClient, TextSelectionDelegate {
   TextInputConnection? _connection;
   final ContextMenuController _menuController = ContextMenuController();
+  final ClipboardStatusNotifier _clipboardStatus = ClipboardStatusNotifier();
+  TextSelectionToolbarAnchors? _toolbarAnchors;
   Rect _caretRect = Rect.zero;
   TextEditingController? _controller;
   VoidCallback? _controllerListener;
@@ -64,6 +67,7 @@ class CustomTextEditState extends State<CustomTextEdit>
     widget.focusNode.addListener(_onFocusChange);
     _initController();
     _currentEditingState = _getInitialEditingValue();
+    _clipboardStatus.addListener(_handleClipboardStatusChanged);
     if (widget.focusNode.hasFocus) {
       _openOrCloseInputConnectionIfNeeded();
     }
@@ -79,10 +83,12 @@ class CustomTextEditState extends State<CustomTextEdit>
             _currentEditingState = _controller!.value;
           });
           // selection/composing 变更回调
-          if (widget.onSelectionChanged != null && oldValue.selection != _currentEditingState.selection) {
+          if (widget.onSelectionChanged != null &&
+              oldValue.selection != _currentEditingState.selection) {
             widget.onSelectionChanged!(_currentEditingState.selection, null);
           }
-          if (widget.onComposingChanged != null && oldValue.composing != _currentEditingState.composing) {
+          if (widget.onComposingChanged != null &&
+              oldValue.composing != _currentEditingState.composing) {
             widget.onComposingChanged!(_currentEditingState.composing);
           }
         }
@@ -153,6 +159,8 @@ class CustomTextEditState extends State<CustomTextEdit>
     _disposeController();
     _closeInputConnectionIfNeeded();
     _menuController.remove();
+    _clipboardStatus.removeListener(_handleClipboardStatusChanged);
+    _clipboardStatus.dispose();
     super.dispose();
   }
 
@@ -237,10 +245,12 @@ class CustomTextEditState extends State<CustomTextEdit>
       widget.controller!.value = value;
     }
     // selection/composing 变更回调
-    if (widget.onSelectionChanged != null && oldValue.selection != value.selection) {
+    if (widget.onSelectionChanged != null &&
+        oldValue.selection != value.selection) {
       widget.onSelectionChanged!(value.selection, null);
     }
-    if (widget.onComposingChanged != null && oldValue.composing != value.composing) {
+    if (widget.onComposingChanged != null &&
+        oldValue.composing != value.composing) {
       widget.onComposingChanged!(value.composing);
     }
     _connection?.setEditingState(value);
@@ -277,7 +287,8 @@ class CustomTextEditState extends State<CustomTextEdit>
   KeyEventResult _onKeyEvent(FocusNode focusNode, KeyEvent event) {
     // Handle both KeyDownEvent and KeyRepeatEvent for key repeat functionality
     // Only process when not composing text
-    if ((event is KeyDownEvent || event is KeyRepeatEvent) && _currentEditingState.composing.isCollapsed) {
+    if ((event is KeyDownEvent || event is KeyRepeatEvent) &&
+        _currentEditingState.composing.isCollapsed) {
       return widget.onKeyEvent(focusNode, event);
     }
     // Let other handlers process the event if composing or not a key down/repeat event.
@@ -293,7 +304,8 @@ class CustomTextEditState extends State<CustomTextEdit>
     }
   }
 
-  bool get _shouldCreateInputConnection => !widget.readOnly && (kIsWeb || widget.focusNode.hasFocus);
+  bool get _shouldCreateInputConnection =>
+      !widget.readOnly && (kIsWeb || widget.focusNode.hasFocus);
 
   void _openInputConnection() {
     if (!_shouldCreateInputConnection || !mounted) {
@@ -374,10 +386,12 @@ class CustomTextEditState extends State<CustomTextEdit>
       widget.controller!.value = value;
     }
     // selection/composing
-    if (widget.onSelectionChanged != null && oldValue.selection != value.selection) {
+    if (widget.onSelectionChanged != null &&
+        oldValue.selection != value.selection) {
       widget.onSelectionChanged!(value.selection, null);
     }
-    if (widget.onComposingChanged != null && oldValue.composing != value.composing) {
+    if (widget.onComposingChanged != null &&
+        oldValue.composing != value.composing) {
       widget.onComposingChanged!(value.composing);
     }
 
@@ -528,10 +542,12 @@ class CustomTextEditState extends State<CustomTextEdit>
       widget.controller!.value = value;
     }
     // selection/composing
-    if (widget.onSelectionChanged != null && oldValue.selection != value.selection) {
+    if (widget.onSelectionChanged != null &&
+        oldValue.selection != value.selection) {
       widget.onSelectionChanged!(value.selection, null);
     }
-    if (widget.onComposingChanged != null && oldValue.composing != value.composing) {
+    if (widget.onComposingChanged != null &&
+        oldValue.composing != value.composing) {
       widget.onComposingChanged!(value.composing);
     }
     _connection?.setEditingState(_currentEditingState);
@@ -543,13 +559,96 @@ class CustomTextEditState extends State<CustomTextEdit>
     if (_menuController.isShown) {
       _menuController.remove();
     }
+    _toolbarAnchors = null;
     // If text handles are being managed by this widget, hide them too.
     // EditableText manages its own handles.
   }
 
+  bool get isToolbarShown => _menuController.isShown;
+
+  @override
+  void showToolbar({Rect? globalSelectionRect}) {
+    if (!mounted) {
+      return;
+    }
+
+    final Rect? anchorRect =
+        globalSelectionRect ?? (_caretRect == Rect.zero ? null : _caretRect);
+
+    if (anchorRect == null) {
+      return;
+    }
+
+    _clipboardStatus.update();
+    _toolbarAnchors = TextSelectionToolbarAnchors(
+      primaryAnchor: anchorRect.bottomCenter,
+      secondaryAnchor: anchorRect.topCenter,
+    );
+
+    if (_menuController.isShown) {
+      _menuController.markNeedsBuild();
+      return;
+    }
+
+    final List<ContextMenuButtonItem> initialItems =
+        _buildContextMenuButtonItems();
+    if (initialItems.isEmpty) {
+      _toolbarAnchors = null;
+      return;
+    }
+
+    _menuController.show(
+      context: context,
+      contextMenuBuilder: (BuildContext context) {
+        final anchors = _toolbarAnchors;
+        final items = _buildContextMenuButtonItems();
+        if (anchors == null || items.isEmpty) {
+          return const SizedBox.shrink();
+        }
+        return AdaptiveTextSelectionToolbar.buttonItems(
+          anchors: anchors,
+          buttonItems: items,
+        );
+      },
+      debugRequiredFor: widget,
+    );
+  }
+
+  void _handleClipboardStatusChanged() {
+    if (!mounted) {
+      return;
+    }
+    if (_menuController.isShown) {
+      _menuController.markNeedsBuild();
+    }
+    setState(() {});
+  }
+
+  List<ContextMenuButtonItem> _buildContextMenuButtonItems() {
+    return EditableText.getEditableButtonItems(
+      clipboardStatus: _clipboardStatus.value,
+      onCopy: copyEnabled
+          ? () => copySelection(SelectionChangedCause.toolbar)
+          : null,
+      onCut: cutEnabled
+          ? () => cutSelection(SelectionChangedCause.toolbar)
+          : null,
+      onPaste: pasteEnabled
+          ? () => pasteText(SelectionChangedCause.toolbar)
+          : null,
+      onSelectAll: selectAllEnabled
+          ? () => selectAll(SelectionChangedCause.toolbar)
+          : null,
+      onLookUp: null,
+      onSearchWeb: null,
+      onShare: null,
+      onLiveTextInput: null,
+    );
+  }
+
   @override
   bool get copyEnabled =>
-      !widget.readOnly && !_currentEditingState.selection.isCollapsed;
+      !_currentEditingState.selection.isCollapsed;
 
   @override
   bool get cutEnabled =>
@@ -560,7 +659,6 @@ class CustomTextEditState extends State<CustomTextEdit>
 
   @override
   bool get selectAllEnabled =>
-      !widget.readOnly &&
       _currentEditingState.text.isNotEmpty &&
       (_currentEditingState.selection.baseOffset != 0 ||
           _currentEditingState.selection.extentOffset !=
@@ -651,10 +749,12 @@ class CustomTextEditState extends State<CustomTextEdit>
     if (widget.controller != null && widget.controller!.value != value) {
       widget.controller!.value = value;
     }
-    if (widget.onSelectionChanged != null && oldValue.selection != value.selection) {
+    if (widget.onSelectionChanged != null &&
+        oldValue.selection != value.selection) {
       widget.onSelectionChanged!(value.selection, cause);
     }
-    if (widget.onComposingChanged != null && oldValue.composing != value.composing) {
+    if (widget.onComposingChanged != null &&
+        oldValue.composing != value.composing) {
       widget.onComposingChanged!(value.composing);
     }
     _connection?.setEditingState(_currentEditingState);
@@ -686,7 +786,7 @@ class CustomTextEditState extends State<CustomTextEdit>
     final RenderBox? box = context.findRenderObject() as RenderBox?;
     return box?.globalToLocal(global) ?? global;
   }
-  
+
   @override
   void performPrivateCommand(String action, Map<String, dynamic> data) {
     // TODO: implement performPrivateCommand

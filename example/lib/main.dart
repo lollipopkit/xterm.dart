@@ -106,20 +106,7 @@ class _HomeState extends State<Home> with TickerProviderStateMixin {
     return Scaffold(
       backgroundColor: Colors.transparent,
       body: SafeArea(
-        child: Stack(
-          children: [
-            Container(
-              color: Colors.yellow,
-              child: Center(
-                child: Text(
-                  'xterm.dart demo',
-                  style: TextStyle(color: Colors.white, fontSize: 24),
-                ),
-              ),
-            ),
-            _buildTerm,
-          ],
-        ),
+        child: _buildTerm,
       ),
     );
   }

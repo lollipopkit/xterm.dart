@@ -262,7 +262,7 @@ class FigArgument extends FigToken {
   }
 }
 
-List<T> singleOrList<T>(item) {
+List<T> singleOrList<T>(dynamic item) {
   if (item == null) return <T>[];
   return item is List ? item.cast<T>() : <T>[item as T];
 }

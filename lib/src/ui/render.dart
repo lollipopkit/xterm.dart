@@ -32,7 +32,10 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     required TerminalTheme theme,
     required FocusNode focusNode,
     required TerminalCursorType cursorType,
+    required bool cursorBlinkEnabled,
+    required bool cursorBlinkVisible,
     required bool alwaysShowCursor,
+    bool paintSelectionHandles = true,
     EditableRectCallback? onEditableRect,
     String? composingText,
   }) : _terminal = terminal,
@@ -42,7 +45,10 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
        _autoResize = autoResize,
        _focusNode = focusNode,
        _cursorType = cursorType,
+       _cursorBlinkEnabled = cursorBlinkEnabled,
+       _cursorBlinkVisible = cursorBlinkVisible,
        _alwaysShowCursor = alwaysShowCursor,
+       _paintSelectionHandles = paintSelectionHandles,
        _onEditableRect = onEditableRect,
        _composingText = composingText,
        _painter = TerminalPainter(
@@ -127,10 +133,31 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     markNeedsPaint();
   }
 
+  bool _cursorBlinkEnabled;
+  set cursorBlinkEnabled(bool value) {
+    if (value == _cursorBlinkEnabled) return;
+    _cursorBlinkEnabled = value;
+    markNeedsPaint();
+  }
+
+  bool _cursorBlinkVisible;
+  set cursorBlinkVisible(bool value) {
+    if (value == _cursorBlinkVisible) return;
+    _cursorBlinkVisible = value;
+    markNeedsPaint();
+  }
+
   bool _alwaysShowCursor;
   set alwaysShowCursor(bool value) {
     if (value == _alwaysShowCursor) return;
     _alwaysShowCursor = value;
+    markNeedsPaint();
+  }
+
+  bool _paintSelectionHandles;
+  set paintSelectionHandles(bool value) {
+    if (value == _paintSelectionHandles) return;
+    _paintSelectionHandles = value;
     markNeedsPaint();
   }
 
@@ -462,7 +489,14 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
         _paintComposingText(canvas, offset + cursorOffset);
       }
 
-      if (_shouldShowCursor) {
+      final shouldPaintCursor =
+          _shouldShowCursor &&
+          (!_cursorBlinkEnabled ||
+              !_focusNode.hasFocus ||
+              _cursorBlinkVisible ||
+              _isComposingText);
+
+      if (shouldPaintCursor) {
         _painter.paintCursor(
           canvas,
           offset + cursorOffset,
@@ -544,7 +578,9 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     }
 
     // 绘制动画选区 cursor
-    _paintAnimatedSelectionCursors(canvas, selection);
+    if (_paintSelectionHandles) {
+      _paintAnimatedSelectionCursors(canvas, selection);
+    }
   }
 
   void _paintAnimatedSelectionCursors(Canvas canvas, BufferRange selection) {

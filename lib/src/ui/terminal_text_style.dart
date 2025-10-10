@@ -29,17 +29,20 @@ class TerminalStyle {
     this.height = _kDefaultHeight,
     this.fontFamily = _kDefaultFontFamily,
     this.fontFamilyFallback = _kDefaultFontFamilyFallback,
+    this.letterSpacing = 0,
   });
 
   factory TerminalStyle.fromTextStyle(TextStyle textStyle) {
     return TerminalStyle(
       fontSize: textStyle.fontSize ?? _kDefaultFontSize,
       height: textStyle.height ?? _kDefaultHeight,
-      fontFamily: textStyle.fontFamily ??
+      fontFamily:
+          textStyle.fontFamily ??
           textStyle.fontFamilyFallback?.first ??
           _kDefaultFontFamily,
       fontFamilyFallback:
           textStyle.fontFamilyFallback ?? _kDefaultFontFamilyFallback,
+      letterSpacing: textStyle.letterSpacing ?? 0,
     );
   }
 
@@ -50,6 +53,8 @@ class TerminalStyle {
   final String fontFamily;
 
   final List<String> fontFamilyFallback;
+
+  final double letterSpacing;
 
   TextStyle toTextStyle({
     Color? color,
@@ -68,6 +73,7 @@ class TerminalStyle {
       fontWeight: bold ? FontWeight.bold : FontWeight.normal,
       fontStyle: italic ? FontStyle.italic : FontStyle.normal,
       decoration: underline ? TextDecoration.underline : TextDecoration.none,
+      letterSpacing: letterSpacing,
     );
   }
 
@@ -76,12 +82,14 @@ class TerminalStyle {
     double? height,
     String? fontFamily,
     List<String>? fontFamilyFallback,
+    double? letterSpacing,
   }) {
     return TerminalStyle(
       fontSize: fontSize ?? this.fontSize,
       height: height ?? this.height,
       fontFamily: fontFamily ?? this.fontFamily,
       fontFamilyFallback: fontFamilyFallback ?? this.fontFamilyFallback,
+      letterSpacing: letterSpacing ?? this.letterSpacing,
     );
   }
 }

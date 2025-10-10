@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -41,6 +43,8 @@ class TerminalView extends StatefulWidget {
     this.keyboardType = TextInputType.emailAddress,
     this.keyboardAppearance = Brightness.dark,
     this.cursorType = TerminalCursorType.block,
+    this.cursorBlink = false,
+    this.cursorBlinkInterval = const Duration(milliseconds: 530),
     this.alwaysShowCursor = false,
     this.deleteDetection = false,
     this.shortcuts,
@@ -52,6 +56,7 @@ class TerminalView extends StatefulWidget {
     this.viewOffset = Offset.zero,
     this.showToolbar = true,
     this.enableSuggestions = true,
+    this.scrollBehavior,
   });
 
   /// The underlying terminal that this widget renders.
@@ -114,6 +119,12 @@ class TerminalView extends StatefulWidget {
   /// The type of cursor to use. [TerminalCursorType.block] by default.
   final TerminalCursorType cursorType;
 
+  /// Whether the cursor should blink. [false] by default to match legacy behavior.
+  final bool cursorBlink;
+
+  /// Interval used when [cursorBlink] is enabled.
+  final Duration cursorBlinkInterval;
+
   /// Whether to always show the cursor. This is useful for debugging.
   /// [false] by default.
   final bool alwaysShowCursor;
@@ -154,11 +165,15 @@ class TerminalView extends StatefulWidget {
   /// If this is false, some Chinese Android will open safe keyboard.
   final bool enableSuggestions;
 
+  /// Allows customizing the scroll behavior used by the terminal viewport.
+  final ScrollBehavior? scrollBehavior;
+
   @override
   State<TerminalView> createState() => TerminalViewState();
 }
 
-class TerminalViewState extends State<TerminalView> with TickerProviderStateMixin {
+class TerminalViewState extends State<TerminalView>
+    with TickerProviderStateMixin {
   late FocusNode _focusNode;
 
   late final ShortcutManager _shortcutManager;
@@ -168,6 +183,10 @@ class TerminalViewState extends State<TerminalView> with TickerProviderStateMixi
   final _scrollableKey = GlobalKey<ScrollableState>();
 
   final _viewportKey = GlobalKey();
+
+  Timer? _cursorBlinkTimer;
+  bool _cursorBlinkVisible = true;
+  bool _previousBlinkEnabled = false;
 
   String? _composingText;
 
@@ -183,21 +202,26 @@ class TerminalViewState extends State<TerminalView> with TickerProviderStateMixi
   @override
   void initState() {
     _focusNode = widget.focusNode ?? FocusNode();
+    _focusNode.addListener(_handleFocusChange);
     _controller = widget.controller ?? TerminalController(vsync: this);
     _scrollController = widget.scrollController ?? ScrollController();
     _shortcutManager = ShortcutManager(
       shortcuts: widget.shortcuts ?? defaultTerminalShortcuts,
     );
     super.initState();
+    _updateCursorBlink(scheduleSetState: false);
   }
 
   @override
   void didUpdateWidget(TerminalView oldWidget) {
     if (oldWidget.focusNode != widget.focusNode) {
+      _focusNode.removeListener(_handleFocusChange);
       if (oldWidget.focusNode == null) {
         _focusNode.dispose();
       }
       _focusNode = widget.focusNode ?? FocusNode();
+      _focusNode.addListener(_handleFocusChange);
+      _updateCursorBlink(resetVisible: true);
     }
     if (oldWidget.controller != widget.controller) {
       if (oldWidget.controller == null) {
@@ -215,11 +239,17 @@ class TerminalViewState extends State<TerminalView> with TickerProviderStateMixi
     if (oldWidget.textStyle.fontSize != widget.textStyle.fontSize) {
       textSizeNoti.value = widget.textStyle.fontSize;
     }
+    if (oldWidget.cursorBlink != widget.cursorBlink ||
+        oldWidget.cursorBlinkInterval != widget.cursorBlinkInterval ||
+        oldWidget.alwaysShowCursor != widget.alwaysShowCursor) {
+      _updateCursorBlink(resetVisible: true);
+    }
     super.didUpdateWidget(oldWidget);
   }
 
   @override
   void dispose() {
+    _focusNode.removeListener(_handleFocusChange);
     if (widget.focusNode == null) {
       _focusNode.dispose();
     }
@@ -231,38 +261,46 @@ class TerminalViewState extends State<TerminalView> with TickerProviderStateMixi
     }
     _shortcutManager.dispose();
     textSizeNoti.dispose();
+    _cursorBlinkTimer?.cancel();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    Widget child = Scrollable(
-      key: _scrollableKey,
-      controller: _scrollController,
-      physics: const ClampingScrollPhysics(),
-      viewportBuilder: (context, offset) {
-        return ValueListenableBuilder(
-          valueListenable: textSizeNoti,
-          builder: (_, textSize, _) {
-            return _TerminalView(
-              key: _viewportKey,
-              terminal: widget.terminal,
-              controller: _controller,
-              offset: offset,
-              padding: MediaQuery.of(context).padding,
-              autoResize: widget.autoResize,
-              textStyle: widget.textStyle.copyWith(fontSize: textSize),
-              textScaler: widget.textScaler ?? MediaQuery.textScalerOf(context),
-              theme: widget.theme,
-              focusNode: _focusNode,
-              cursorType: widget.cursorType,
-              alwaysShowCursor: widget.alwaysShowCursor,
-              onEditableRect: _onEditableRect,
-              composingText: _composingText,
-            );
-          },
-        );
-      },
+    Widget child = ScrollConfiguration(
+      behavior: widget.scrollBehavior ?? const _TerminalScrollBehavior(),
+      child: Scrollable(
+        key: _scrollableKey,
+        controller: _scrollController,
+        physics: const ClampingScrollPhysics(),
+        viewportBuilder: (context, offset) {
+          return ValueListenableBuilder(
+            valueListenable: textSizeNoti,
+            builder: (_, textSize, _) {
+              return _TerminalView(
+                key: _viewportKey,
+                terminal: widget.terminal,
+                controller: _controller,
+                offset: offset,
+                padding: MediaQuery.of(context).padding,
+                autoResize: widget.autoResize,
+                textStyle: widget.textStyle.copyWith(fontSize: textSize),
+                textScaler:
+                    widget.textScaler ?? MediaQuery.textScalerOf(context),
+                theme: widget.theme,
+                focusNode: _focusNode,
+                cursorType: widget.cursorType,
+                cursorBlinkEnabled: _cursorBlinkEnabled,
+                cursorBlinkVisible: _cursorBlinkVisible,
+                alwaysShowCursor: widget.alwaysShowCursor,
+                paintSelectionHandles: widget.showToolbar,
+                onEditableRect: _onEditableRect,
+                composingText: _composingText,
+              );
+            },
+          );
+        },
+      ),
     );
 
     if (!widget.hideScrollBar) {
@@ -290,6 +328,7 @@ class TerminalViewState extends State<TerminalView> with TickerProviderStateMixi
         onDelete: () {
           _scrollToBottom();
           widget.terminal.keyInput(TerminalKey.backspace);
+          _updateCursorBlink(resetVisible: true);
         },
         onComposing: _onComposing,
         onAction: (action) {
@@ -298,6 +337,7 @@ class TerminalViewState extends State<TerminalView> with TickerProviderStateMixi
           if (action == TextInputAction.done ||
               action == TextInputAction.newline) {
             widget.terminal.keyInput(TerminalKey.enter);
+            _updateCursorBlink(resetVisible: true);
           }
         },
         onKeyEvent: _handleKeyEvent,
@@ -336,6 +376,7 @@ class TerminalViewState extends State<TerminalView> with TickerProviderStateMixi
           ? _onSecondaryTapUp
           : null,
       readOnly: widget.readOnly,
+      scrollController: _scrollController,
       child: child,
     );
 
@@ -365,6 +406,19 @@ class TerminalViewState extends State<TerminalView> with TickerProviderStateMixi
     _customTextEditKey.currentState?.closeKeyboard();
   }
 
+  void showSelectionToolbar(Rect globalSelectionRect) {
+    _customTextEditKey.currentState?.showToolbar(
+      globalSelectionRect: globalSelectionRect,
+    );
+  }
+
+  void hideSelectionToolbar() {
+    _customTextEditKey.currentState?.hideToolbar();
+  }
+
+  bool get isSelectionToolbarShown =>
+      _customTextEditKey.currentState?.isToolbarShown ?? false;
+
   void toggleFocus() {
     _customTextEditKey.currentState?.toggleKeyboard();
     if (_focusNode.hasFocus) {
@@ -381,6 +435,49 @@ class TerminalViewState extends State<TerminalView> with TickerProviderStateMixi
   Rect get globalCursorRect {
     return renderTerminal.localToGlobal(renderTerminal.cursorOffset) &
         renderTerminal.cellSize;
+  }
+
+  bool get _cursorBlinkEnabled {
+    return widget.cursorBlink &&
+        _focusNode.hasFocus &&
+        !widget.alwaysShowCursor;
+  }
+
+  void _handleFocusChange() {
+    _updateCursorBlink(resetVisible: true);
+  }
+
+  void _updateCursorBlink({
+    bool resetVisible = false,
+    bool scheduleSetState = true,
+  }) {
+    final shouldBlink = _cursorBlinkEnabled;
+    final blinkChanged = shouldBlink != _previousBlinkEnabled;
+    _previousBlinkEnabled = shouldBlink;
+
+    _cursorBlinkTimer?.cancel();
+
+    var shouldNotify = blinkChanged;
+
+    if ((resetVisible || !shouldBlink) && !_cursorBlinkVisible) {
+      _cursorBlinkVisible = true;
+      shouldNotify = true;
+    }
+
+    if (shouldBlink) {
+      _cursorBlinkTimer = Timer.periodic(widget.cursorBlinkInterval, (_) {
+        if (!mounted) {
+          return;
+        }
+        setState(() {
+          _cursorBlinkVisible = !_cursorBlinkVisible;
+        });
+      });
+    }
+
+    if (shouldNotify && scheduleSetState && mounted) {
+      setState(() {});
+    }
   }
 
   void _onTapUp(TapUpDetails details) {
@@ -401,6 +498,8 @@ class TerminalViewState extends State<TerminalView> with TickerProviderStateMixi
         _focusNode.requestFocus();
       }
     }
+
+    _updateCursorBlink(resetVisible: true);
 
     widget.terminal.mouseInput(
       TerminalMouseButton.left,
@@ -436,10 +535,12 @@ class TerminalViewState extends State<TerminalView> with TickerProviderStateMixi
     }
 
     _scrollToBottom();
+    _updateCursorBlink(resetVisible: true);
   }
 
   void _onComposing(String? text) {
     setState(() => _composingText = text);
+    _updateCursorBlink(resetVisible: true);
   }
 
   KeyEventResult _handleKeyEvent(FocusNode focusNode, KeyEvent event) {
@@ -482,6 +583,7 @@ class TerminalViewState extends State<TerminalView> with TickerProviderStateMixi
 
     if (handled) {
       _scrollToBottom();
+      _updateCursorBlink(resetVisible: true);
     }
 
     return handled ? KeyEventResult.handled : KeyEventResult.ignored;
@@ -508,8 +610,7 @@ class TerminalViewState extends State<TerminalView> with TickerProviderStateMixi
     if (position == null) return;
     final notBottom = position.pixels < position.maxScrollExtent;
     final shouldScrollDown =
-        localPointerPosition.dy >
-        renderTerminal.size.height - scrollThrshold;
+        localPointerPosition.dy > renderTerminal.size.height - scrollThrshold;
     if (shouldScrollDown && notBottom) {
       position.animateTo(
         position.pixels + scrollThrshold,
@@ -542,7 +643,10 @@ class _TerminalView extends LeafRenderObjectWidget {
     required this.theme,
     required this.focusNode,
     required this.cursorType,
+    required this.cursorBlinkEnabled,
+    required this.cursorBlinkVisible,
     required this.alwaysShowCursor,
+    required this.paintSelectionHandles,
     this.onEditableRect,
     this.composingText,
   });
@@ -567,7 +671,13 @@ class _TerminalView extends LeafRenderObjectWidget {
 
   final TerminalCursorType cursorType;
 
+  final bool cursorBlinkEnabled;
+
+  final bool cursorBlinkVisible;
+
   final bool alwaysShowCursor;
+
+  final bool paintSelectionHandles;
 
   final EditableRectCallback? onEditableRect;
 
@@ -586,7 +696,10 @@ class _TerminalView extends LeafRenderObjectWidget {
       theme: theme,
       focusNode: focusNode,
       cursorType: cursorType,
+      cursorBlinkEnabled: cursorBlinkEnabled,
+      cursorBlinkVisible: cursorBlinkVisible,
       alwaysShowCursor: alwaysShowCursor,
+      paintSelectionHandles: paintSelectionHandles,
       onEditableRect: onEditableRect,
       composingText: composingText,
     );
@@ -605,8 +718,24 @@ class _TerminalView extends LeafRenderObjectWidget {
       ..theme = theme
       ..focusNode = focusNode
       ..cursorType = cursorType
+      ..cursorBlinkEnabled = cursorBlinkEnabled
+      ..cursorBlinkVisible = cursorBlinkVisible
       ..alwaysShowCursor = alwaysShowCursor
+      ..paintSelectionHandles = paintSelectionHandles
       ..onEditableRect = onEditableRect
       ..composingText = composingText;
+  }
+}
+
+class _TerminalScrollBehavior extends ScrollBehavior {
+  const _TerminalScrollBehavior();
+
+  @override
+  Widget buildOverscrollIndicator(
+    BuildContext context,
+    Widget child,
+    ScrollableDetails details,
+  ) {
+    return child;
   }
 }

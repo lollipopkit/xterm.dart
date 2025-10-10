@@ -56,18 +56,17 @@ class _CharMetricsKey {
     required this.fontFamily,
     required this.fontFamilyFallback,
     required this.textScalerHash,
+    required this.letterSpacing,
   });
 
-  factory _CharMetricsKey.from(
-    TerminalStyle style,
-    TextScaler textScaler,
-  ) {
+  factory _CharMetricsKey.from(TerminalStyle style, TextScaler textScaler) {
     return _CharMetricsKey(
       effectiveFontSize: textScaler.scale(style.fontSize),
       lineHeight: style.height,
       fontFamily: style.fontFamily,
       fontFamilyFallback: List<String>.unmodifiable(style.fontFamilyFallback),
       textScalerHash: Object.hash(textScaler.runtimeType, textScaler.hashCode),
+      letterSpacing: style.letterSpacing,
     );
   }
 
@@ -76,6 +75,7 @@ class _CharMetricsKey {
   final String fontFamily;
   final List<String> fontFamilyFallback;
   final int textScalerHash;
+  final double letterSpacing;
 
   @override
   bool operator ==(Object other) {
@@ -84,6 +84,7 @@ class _CharMetricsKey {
         other.effectiveFontSize == effectiveFontSize &&
         other.lineHeight == lineHeight &&
         other.fontFamily == fontFamily &&
+        other.letterSpacing == letterSpacing &&
         other.textScalerHash == textScalerHash &&
         CharMetricsCache._listEquality.equals(
           other.fontFamilyFallback,
@@ -98,6 +99,7 @@ class _CharMetricsKey {
       lineHeight,
       fontFamily,
       textScalerHash,
+      letterSpacing,
       CharMetricsCache._listEquality.hash(fontFamilyFallback),
     );
   }
