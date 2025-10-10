@@ -2,6 +2,7 @@ import 'dart:ui';
 import 'package:flutter/painting.dart';
 
 import 'package:flutter/rendering.dart';
+import 'package:xterm/src/ui/char_metrics.dart';
 import 'package:xterm/src/ui/palette_builder.dart';
 import 'package:xterm/src/ui/paragraph_cache.dart';
 import 'package:xterm/xterm.dart';
@@ -55,23 +56,7 @@ class TerminalPainter {
   }
 
   Size _measureCharSize() {
-    const test = 'mmmmmmmmmm';
-
-    final textStyle = _textStyle.toTextStyle();
-    final builder = ParagraphBuilder(textStyle.getParagraphStyle());
-    builder.pushStyle(textStyle.getTextStyle(textScaler: _textScaler));
-    builder.addText(test);
-
-    final paragraph = builder.build();
-    paragraph.layout(ParagraphConstraints(width: double.infinity));
-
-    final result = Size(
-      paragraph.maxIntrinsicWidth / test.length,
-      paragraph.height,
-    );
-
-    paragraph.dispose();
-    return result;
+    return CharMetricsCache.instance.measure(_textStyle, _textScaler);
   }
 
   /// The size of each character in the terminal.
@@ -80,6 +65,7 @@ class TerminalPainter {
   /// When the set of font available to the system changes, call this method to
   /// clear cached state related to font rendering.
   void clearFontCache() {
+    CharMetricsCache.instance.clear();
     _cellSize = _measureCharSize();
     _paragraphCache.clear();
   }

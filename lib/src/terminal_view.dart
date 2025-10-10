@@ -212,6 +212,9 @@ class TerminalViewState extends State<TerminalView> with TickerProviderStateMixi
       _scrollController = widget.scrollController ?? ScrollController();
     }
     _shortcutManager.shortcuts = widget.shortcuts ?? defaultTerminalShortcuts;
+    if (oldWidget.textStyle.fontSize != widget.textStyle.fontSize) {
+      textSizeNoti.value = widget.textStyle.fontSize;
+    }
     super.didUpdateWidget(oldWidget);
   }
 
@@ -227,6 +230,7 @@ class TerminalViewState extends State<TerminalView> with TickerProviderStateMixi
       _scrollController.dispose();
     }
     _shortcutManager.dispose();
+    textSizeNoti.dispose();
     super.dispose();
   }
 
