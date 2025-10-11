@@ -6,14 +6,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:xterm/src/core/buffer/cell_offset.dart';
-import 'package:xterm/src/core/buffer/range_line.dart';
-import 'package:xterm/src/core/mouse/button.dart';
-import 'package:xterm/src/core/mouse/button_state.dart';
-import 'package:xterm/src/terminal_view.dart';
-import 'package:xterm/src/ui/controller.dart';
-import 'package:xterm/src/ui/pointer_input.dart';
 import 'package:xterm/src/ui/render.dart';
+import 'package:xterm/xterm.dart';
 
 enum _DragHandleType { none, start, end }
 
@@ -100,15 +94,20 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
 
   ScrollController? _attachedScrollController;
   bool _scrollUpdateScheduled = false;
+  ValueListenable<bool>? _scrollActivityNotifier;
 
   bool get _shouldShowHandles =>
       widget.showToolbar &&
       _selectedRange != null &&
       !_selectedRange!.isCollapsed;
 
+  bool get _isViewportScrolling => _scrollActivityNotifier?.value ?? false;
+
   @override
   void initState() {
     super.initState();
+    widget.terminalController.addListener(_handleControllerSelectionChanged);
+    _syncSelectionFromController();
     _attachScrollController(widget.scrollController);
   }
 
@@ -146,6 +145,13 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
   @override
   void didUpdateWidget(TerminalGestureHandler oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.terminalController != widget.terminalController) {
+      oldWidget.terminalController.removeListener(
+        _handleControllerSelectionChanged,
+      );
+      widget.terminalController.addListener(_handleControllerSelectionChanged);
+      _syncSelectionFromController();
+    }
     if (oldWidget.scrollController != widget.scrollController) {
       _detachScrollController(oldWidget.scrollController);
       _attachScrollController(widget.scrollController);
@@ -155,6 +161,7 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
   @override
   void dispose() {
     _cancelPendingTapDown();
+    widget.terminalController.removeListener(_handleControllerSelectionChanged);
     _detachScrollController(_attachedScrollController);
     super.dispose();
   }
@@ -183,33 +190,99 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
     }
   }
 
+  void _handleControllerSelectionChanged() {
+    if (!mounted) {
+      return;
+    }
+    _syncSelectionFromController();
+  }
+
+  void _syncSelectionFromController() {
+    final selection = widget.terminalController.selection;
+
+    BufferRangeLine? nextRange;
+    if (selection == null) {
+      nextRange = null;
+    } else {
+      nextRange = _controllerRangeAsLine(selection);
+    }
+
+    final previousRange = _selectedRange;
+    final bool changed = previousRange != nextRange;
+
+    if (changed) {
+      setState(() {
+        _selectedRange = nextRange;
+      });
+    } else {
+      _selectedRange = nextRange;
+    }
+
+    if (!widget.showToolbar ||
+        !widget.terminalView.isSelectionToolbarShown ||
+        nextRange == null ||
+        nextRange.isCollapsed) {
+      if (widget.showToolbar &&
+          widget.terminalView.isSelectionToolbarShown &&
+          (nextRange == null || nextRange.isCollapsed)) {
+        widget.terminalView.hideSelectionToolbar();
+      }
+      return;
+    }
+
+    if (_isViewportScrolling) {
+      return;
+    }
+
+    final Rect? rect = _selectionRectForRange(nextRange);
+    if (rect != null) {
+      widget.terminalView.showSelectionToolbar(rect);
+    }
+  }
+
   List<Widget> _buildSelectionHandles() {
     if (!_shouldShowHandles) {
       return const <Widget>[];
     }
 
     final BufferRangeLine range = _selectedRange!.normalized;
+    final _SelectionGeometry? geometry = _selectionGeometry(range);
+    if (geometry == null) {
+      return const <Widget>[];
+    }
+
     final TextDirection textDirection = Directionality.of(context);
-    final Size cellSize = renderTerminal.cellSize;
-
-    final Offset startAnchor = renderTerminal.getOffset(range.begin);
-    final Offset endAnchor =
-        renderTerminal.getOffset(range.end) +
-        Offset(cellSize.width, cellSize.height);
-
-    final TextSelectionHandleType startHandleType =
-        textDirection == TextDirection.ltr
-        ? TextSelectionHandleType.left
-        : TextSelectionHandleType.right;
-    final TextSelectionHandleType endHandleType =
-        textDirection == TextDirection.ltr
-        ? TextSelectionHandleType.right
-        : TextSelectionHandleType.left;
+    final TextSelectionHandleType startHandleType = _startHandleTypeFor(
+      textDirection,
+    );
+    final TextSelectionHandleType endHandleType = _endHandleTypeFor(
+      textDirection,
+    );
 
     return <Widget>[
-      _buildHandleWidget(startAnchor, startHandleType, _DragHandleType.start),
-      _buildHandleWidget(endAnchor, endHandleType, _DragHandleType.end),
+      _buildHandleWidget(
+        geometry.startAnchor,
+        startHandleType,
+        _DragHandleType.start,
+      ),
+      _buildHandleWidget(
+        geometry.endAnchor,
+        endHandleType,
+        _DragHandleType.end,
+      ),
     ];
+  }
+
+  TextSelectionHandleType _startHandleTypeFor(TextDirection textDirection) {
+    return textDirection == TextDirection.ltr
+        ? TextSelectionHandleType.left
+        : TextSelectionHandleType.right;
+  }
+
+  TextSelectionHandleType _endHandleTypeFor(TextDirection textDirection) {
+    return textDirection == TextDirection.ltr
+        ? TextSelectionHandleType.right
+        : TextSelectionHandleType.left;
   }
 
   Widget _buildHandleWidget(
@@ -254,32 +327,114 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
     );
   }
 
+  _SelectionGeometry? _selectionGeometry(BufferRangeLine range) {
+    final BufferRangeLine normalized = range.normalized;
+    final Size cellSize = renderTerminal.cellSize;
+    final Offset startTopLeft = renderTerminal.getOffset(normalized.begin);
+    final Offset startAnchor = startTopLeft + Offset(0, cellSize.height);
+
+    final Offset endTopLeft = renderTerminal.getOffset(normalized.end);
+    final Offset endBottomRight =
+        endTopLeft + Offset(cellSize.width, cellSize.height);
+    final Offset endAnchor = endBottomRight;
+
+    return _SelectionGeometry(
+      localRect: Rect.fromPoints(startTopLeft, endBottomRight),
+      startAnchor: startAnchor,
+      endAnchor: endAnchor,
+    );
+  }
+
+  bool _selectionContains(BufferRangeLine range, CellOffset offset) {
+    return range.normalized.contains(offset);
+  }
+
+  BufferRangeLine? _controllerRangeAsLine(BufferRange selection) {
+    if (selection is BufferRangeLine) {
+      return _inclusiveControllerRange(selection);
+    }
+    if (selection.isCollapsed) {
+      return BufferRangeLine(selection.begin, selection.begin);
+    }
+    return null;
+  }
+
+  BufferRangeLine _inclusiveControllerRange(BufferRangeLine range) {
+    final BufferRangeLine normalized = range.normalized;
+    if (normalized.isCollapsed) {
+      return normalized;
+    }
+    final bool shouldAdjust;
+    if (normalized.end.y == normalized.begin.y) {
+      shouldAdjust = normalized.end.x >= normalized.begin.x;
+    } else {
+      shouldAdjust = normalized.end.x >= normalized.begin.x;
+    }
+    if (!shouldAdjust) {
+      return normalized;
+    }
+    final CellOffset inclusiveEnd = _exclusiveToInclusive(normalized.end);
+    return BufferRangeLine(normalized.begin, inclusiveEnd);
+  }
+
+  CellOffset _exclusiveToInclusive(CellOffset exclusiveEnd) {
+    if (exclusiveEnd.x > 0) {
+      return CellOffset(exclusiveEnd.x - 1, exclusiveEnd.y);
+    }
+    final int lastColumn = terminalView.widget.terminal.viewWidth - 1;
+    final int previousRow = math.max(0, exclusiveEnd.y - 1);
+    return CellOffset(lastColumn, previousRow);
+  }
+
   /// 检测点击位置是否在拖杆范围内
   _DragHandleType _detectDragHandle(Offset localPosition) {
-    if (_selectedRange == null || _selectedRange!.isCollapsed) {
+    final BufferRangeLine? range = _selectedRange;
+    if (range == null || range.isCollapsed) {
       return _DragHandleType.none;
     }
 
-    // 获取选区开始和结束的像素位置
-    final startOffset = renderTerminal.getOffset(_selectedRange!.begin);
-    final endOffset = renderTerminal.getOffset(_selectedRange!.end);
-    final cellSize = renderTerminal.cellSize;
+    final _SelectionGeometry? geometry = _selectionGeometry(range);
+    if (geometry == null) {
+      return _DragHandleType.none;
+    }
 
-    // 计算拖杆中心位置，稍微向外偏移以避免重叠
-    final startHandleCenter = startOffset + Offset(0, cellSize.height / 2);
-    final endHandleCenter =
-        endOffset + Offset(cellSize.width, cellSize.height / 2);
+    final TextDirection textDirection = Directionality.of(context);
+    final TextSelectionHandleType startHandleType = _startHandleTypeFor(
+      textDirection,
+    );
+    final TextSelectionHandleType endHandleType = _endHandleTypeFor(
+      textDirection,
+    );
+    final double lineHeight = renderTerminal.cellSize.height;
+    final Size handleSize = _selectionControls.getHandleSize(lineHeight);
 
-    // 优先检查距离更近的拖杆
-    final distanceToStart = (localPosition - startHandleCenter).distance;
-    final distanceToEnd = (localPosition - endHandleCenter).distance;
+    final Offset startHandleAnchor = _selectionControls.getHandleAnchor(
+      startHandleType,
+      lineHeight,
+    );
+    final Rect startRect = Rect.fromLTWH(
+      geometry.startAnchor.dx - startHandleAnchor.dx,
+      geometry.startAnchor.dy - startHandleAnchor.dy,
+      handleSize.width,
+      handleSize.height,
+    ).inflate(_handleTouchRadius);
 
-    if (distanceToStart <= _handleTouchRadius &&
-        distanceToStart <= distanceToEnd) {
+    if (startRect.contains(localPosition)) {
       return _DragHandleType.start;
     }
 
-    if (distanceToEnd <= _handleTouchRadius) {
+    final Offset endHandleAnchor = _selectionControls.getHandleAnchor(
+      endHandleType,
+      lineHeight,
+    );
+    final Rect endRect = Rect.fromLTWH(
+      geometry.endAnchor.dx - endHandleAnchor.dx,
+      geometry.endAnchor.dy - endHandleAnchor.dy,
+      handleSize.width,
+      handleSize.height,
+    ).inflate(_handleTouchRadius);
+
+    if (endRect.contains(localPosition)) {
       return _DragHandleType.end;
     }
 
@@ -288,28 +443,23 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
 
   /// 检查点击位置是否在选区附近（容忍度范围内）
   bool _isNearSelection(Offset localPosition) {
-    if (_selectedRange == null || _selectedRange!.isCollapsed) {
+    final BufferRangeLine? range = _selectedRange;
+    if (range == null || range.isCollapsed) {
       return false;
     }
 
     final cellOffset = renderTerminal.getCellOffset(localPosition);
 
-    // 计算到选区的最短距离
-    if (_selectedRange!.contains(cellOffset)) {
-      return true; // 在选区内部
+    if (_selectionContains(range, cellOffset)) {
+      return true;
     }
 
-    // 检查是否在选区边界附近
-    final startPixel = renderTerminal.getOffset(_selectedRange!.begin);
-    final endPixel = renderTerminal.getOffset(_selectedRange!.end);
+    final _SelectionGeometry? geometry = _selectionGeometry(range);
+    if (geometry == null) {
+      return false;
+    }
 
-    // 简单的矩形区域检查
-    final selectionRect = Rect.fromPoints(
-      startPixel,
-      endPixel + renderTerminal.cellSize.bottomRight(Offset.zero),
-    );
-    final expandedRect = selectionRect.inflate(_selectionTolerance);
-
+    final Rect expandedRect = geometry.localRect.inflate(_selectionTolerance);
     return expandedRect.contains(localPosition);
   }
 
@@ -397,7 +547,7 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
         return;
       }
 
-      if (_selectedRange!.contains(cellOffset)) {
+      if (_selectionContains(_selectedRange!, cellOffset)) {
         // 点击选中区域内部，保持选择
       } else {
         // 点击选中区域外部，清除选择
@@ -499,7 +649,9 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
 
     setState(() {});
 
-    if (widget.showToolbar && widget.terminalView.isSelectionToolbarShown) {
+    if (widget.showToolbar &&
+        widget.terminalView.isSelectionToolbarShown &&
+        !_isViewportScrolling) {
       final Rect? rect = _currentSelectionGlobalRect();
       if (rect != null) {
         widget.terminalView.showSelectionToolbar(rect);
@@ -510,6 +662,9 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
   void _handleScrollChange() {
     if (_scrollUpdateScheduled || !mounted) {
       return;
+    }
+    if (_scrollActivityNotifier == null) {
+      _ensureScrollActivityBinding();
     }
     _scrollUpdateScheduled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -528,6 +683,7 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
     }
     controller.addListener(_handleScrollChange);
     _attachedScrollController = controller;
+    _ensureScrollActivityBinding();
   }
 
   void _detachScrollController(ScrollController? controller) {
@@ -536,20 +692,70 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
     }
     controller.removeListener(_handleScrollChange);
     if (_attachedScrollController == controller) {
+      _scrollActivityNotifier?.removeListener(_handleScrollActivityChanged);
+      _scrollActivityNotifier = null;
       _attachedScrollController = null;
+    }
+  }
+
+  void _ensureScrollActivityBinding() {
+    final controller = _attachedScrollController;
+    if (controller == null) {
+      return;
+    }
+    if (!controller.hasClients) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || _attachedScrollController != controller) {
+          return;
+        }
+        _ensureScrollActivityBinding();
+      });
+      return;
+    }
+
+    final ValueListenable<bool> notifier =
+        controller.position.isScrollingNotifier;
+    if (identical(_scrollActivityNotifier, notifier)) {
+      return;
+    }
+    _scrollActivityNotifier?.removeListener(_handleScrollActivityChanged);
+    _scrollActivityNotifier = notifier;
+    _scrollActivityNotifier!.addListener(_handleScrollActivityChanged);
+    _handleScrollActivityChanged();
+  }
+
+  void _handleScrollActivityChanged() {
+    if (!mounted) {
+      return;
+    }
+    if (_isViewportScrolling) {
+      if (widget.showToolbar && widget.terminalView.isSelectionToolbarShown) {
+        widget.terminalView.hideSelectionToolbar();
+      }
+      return;
+    }
+
+    if (!widget.showToolbar ||
+        _selectedRange == null ||
+        _selectedRange!.isCollapsed ||
+        !widget.terminalView.isSelectionToolbarShown) {
+      return;
+    }
+
+    final Rect? rect = _currentSelectionGlobalRect();
+    if (rect != null) {
+      widget.terminalView.showSelectionToolbar(rect);
     }
   }
 
   void _applySelection(BufferRangeLine range) {
     final BufferRangeLine normalized = range.normalized;
-    renderTerminal.selectCharacters(normalized.begin, normalized.end);
-    if (_selectedRange != normalized) {
-      setState(() {
-        _selectedRange = normalized;
-      });
+    if (normalized.isCollapsed) {
+      renderTerminal.selectCharacters(normalized.begin);
     } else {
-      _selectedRange = normalized;
+      renderTerminal.selectBufferRange(normalized);
     }
+    _syncSelectionFromController();
   }
 
   /// 重置拖杆状态
@@ -858,21 +1064,37 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
     }
   }
 
-  Rect? _currentSelectionGlobalRect() {
-    if (_selectedRange == null || _selectedRange!.isCollapsed) {
+  Rect? _selectionRectForRange(BufferRangeLine range) {
+    final _SelectionGeometry? geometry = _selectionGeometry(range);
+    if (geometry == null) {
       return null;
     }
-    final Offset startLocal = renderTerminal.getOffset(_selectedRange!.begin);
-    final Offset endLocal = renderTerminal.getOffset(_selectedRange!.end);
-    final Offset endBottomRight =
-        endLocal + renderTerminal.cellSize.bottomRight(Offset.zero);
-    final Rect localRect = Rect.fromPoints(startLocal, endBottomRight);
     final Offset globalTopLeft = renderTerminal.localToGlobal(
-      localRect.topLeft,
+      geometry.localRect.topLeft,
     );
     final Offset globalBottomRight = renderTerminal.localToGlobal(
-      localRect.bottomRight,
+      geometry.localRect.bottomRight,
     );
     return Rect.fromPoints(globalTopLeft, globalBottomRight);
   }
+
+  Rect? _currentSelectionGlobalRect() {
+    final range = _selectedRange;
+    if (range == null || range.isCollapsed) {
+      return null;
+    }
+    return _selectionRectForRange(range);
+  }
+}
+
+class _SelectionGeometry {
+  const _SelectionGeometry({
+    required this.localRect,
+    required this.startAnchor,
+    required this.endAnchor,
+  });
+
+  final Rect localRect;
+  final Offset startAnchor;
+  final Offset endAnchor;
 }

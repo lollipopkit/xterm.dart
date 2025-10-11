@@ -218,51 +218,6 @@ class TerminalPainter {
     canvas.drawRect(offset & size, paint);
   }
 
-  @pragma('vm:prefer-inline')
-  // TerminalPainter 中的 paintSelectionCursor 方法增强版本
-  @pragma('vm:prefer-inline')
-  void paintSelectionCursor(
-    Canvas canvas,
-    Offset offset,
-    double width, {
-    double scale = 1.0,
-    double opacity = 1.0,
-  }) {
-    final paint = Paint()
-      ..color = _theme.selectionCursor.withValues(alpha: opacity)
-      ..strokeWidth = 1;
-
-    final scaledWidth = width * scale;
-    final scaledHeight = _cellSize.height * 1.5 * scale;
-
-    // 调整偏移以保持中心对齐
-    final adjustedOffset = offset.translate(
-      (width - scaledWidth) / 2,
-      _cellSize.height * -0.25 * scale,
-    );
-
-    // 绘制线条
-    final size = Size(scaledWidth, scaledHeight);
-    canvas.drawRect(adjustedOffset & size, paint);
-
-    // 绘制圆圈
-    final circleRadius = 4.0 * scale;
-    final circleCenter = adjustedOffset.translate(scaledWidth / 2, 0);
-    canvas.drawCircle(circleCenter, circleRadius, paint);
-  }
-
-  // 同时提供一个带动画参数的便捷方法
-  @pragma('vm:prefer-inline')
-  void paintAnimatedSelectionCursor(
-    Canvas canvas,
-    Offset offset,
-    double width, {
-    required double scale,
-    double opacity = 1.0,
-  }) {
-    paintSelectionCursor(canvas, offset, width, scale: scale, opacity: opacity);
-  }
-
   /// Get the effective foreground color for a cell from information encoded in
   /// [cellColor].
   @pragma('vm:prefer-inline')

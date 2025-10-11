@@ -303,11 +303,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     if (fromBoundary == null) return null;
 
     if (to == null) {
-      _controller.setSelection(
-        _terminal.buffer.createAnchorFromOffset(fromBoundary.begin),
-        _terminal.buffer.createAnchorFromOffset(fromBoundary.end),
-        mode: SelectionMode.line,
-      );
+      selectBufferRange(fromBoundary, mode: SelectionMode.line);
       return fromBoundary;
     } else {
       /// Same as find [fromBoundary]
@@ -320,11 +316,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
       if (toBoundary == null) return null;
 
       final range = fromBoundary.merge(toBoundary);
-      _controller.setSelection(
-        _terminal.buffer.createAnchorFromOffset(range.begin),
-        _terminal.buffer.createAnchorFromOffset(range.end),
-        mode: SelectionMode.line,
-      );
+      selectBufferRange(range, mode: SelectionMode.line);
       return range;
     }
   }
@@ -354,6 +346,15 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
         _terminal.buffer.createAnchorFromOffset(to),
       );
     }
+  }
+
+  void selectBufferRange(BufferRange range, {SelectionMode? mode}) {
+    final normalized = range.normalized;
+    _controller.setSelection(
+      _terminal.buffer.createAnchorFromOffset(normalized.begin),
+      _terminal.buffer.createAnchorFromOffset(normalized.end),
+      mode: mode ?? _controller.selectionMode,
+    );
   }
 
   void clearSelection() {
@@ -576,79 +577,6 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
 
       _paintSegment(canvas, segment, _painter.theme.selection);
     }
-
-    // 绘制动画选区 cursor
-    if (_paintSelectionHandles) {
-      _paintAnimatedSelectionCursors(canvas, selection);
-    }
-  }
-
-  void _paintAnimatedSelectionCursors(Canvas canvas, BufferRange selection) {
-    final animation = _controller.selectionAnimation;
-
-    if (animation != null) {
-      // 获取动画参数
-      final scale = animation.scaleAnimation.value;
-      final positionOffset = animation.positionAnimation.value;
-
-      // 计算基础位置
-      final startBaseOffset = Offset(
-        selection.begin.x * _painter.cellSize.width,
-        selection.begin.y * _painter.cellSize.height + _lineOffset,
-      );
-
-      final endBaseOffset = Offset(
-        selection.end.x * _painter.cellSize.width,
-        selection.end.y * _painter.cellSize.height + _lineOffset,
-      );
-
-      // 应用位置动画偏移
-      final startOffset = startBaseOffset.translate(
-        positionOffset.dx * _painter.cellSize.width,
-        positionOffset.dy * _painter.cellSize.height,
-      );
-
-      final endOffset = endBaseOffset.translate(
-        positionOffset.dx * _painter.cellSize.width,
-        positionOffset.dy * _painter.cellSize.height,
-      );
-
-      // 绘制动画 cursor
-      _paintAnimatedSelectionCursor(canvas, startOffset, scale);
-      _paintAnimatedSelectionCursor(canvas, endOffset, scale);
-    } else {
-      // 无动画时的常规绘制
-      final startOffset = Offset(
-        selection.begin.x * _painter.cellSize.width,
-        selection.begin.y * _painter.cellSize.height + _lineOffset,
-      );
-
-      final endOffset = Offset(
-        selection.end.x * _painter.cellSize.width,
-        selection.end.y * _painter.cellSize.height + _lineOffset,
-      );
-
-      _painter.paintSelectionCursor(canvas, startOffset, 2);
-      _painter.paintSelectionCursor(canvas, endOffset, 2);
-    }
-  }
-
-  void _paintAnimatedSelectionCursor(
-    Canvas canvas,
-    Offset offset,
-    double scale,
-  ) {
-    canvas.save();
-
-    // 以 cursor 中心为缩放点
-    final centerOffset = offset.translate(1, _painter.cellSize.height * 0.5);
-    canvas.translate(centerOffset.dx, centerOffset.dy);
-    canvas.scale(scale);
-    canvas.translate(-centerOffset.dx, -centerOffset.dy);
-
-    _painter.paintSelectionCursor(canvas, offset, 2);
-
-    canvas.restore();
   }
 
   void _paintHighlights(
