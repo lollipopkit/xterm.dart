@@ -6,6 +6,17 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:xterm/src/ui/shortcut/shortcuts.dart';
 
+/// Builds customized context menu entries for the text selection toolbar.
+///
+/// The [defaultItems] argument reflects the actions that would normally be
+/// shown (copy, paste, select all, etc.). Implementations can reuse or replace
+/// them when building the final list of entries to display.
+typedef CustomTextEditToolbarBuilder = List<ContextMenuButtonItem> Function(
+  BuildContext context,
+  CustomTextEditState state,
+  List<ContextMenuButtonItem> defaultItems,
+);
+
 class CustomTextEdit extends StatefulWidget {
   final Widget child;
   final void Function(String) onInsert;
@@ -25,6 +36,12 @@ class CustomTextEdit extends StatefulWidget {
   final Brightness keyboardAppearance;
   final bool deleteDetection;
   final bool enableSuggestions;
+  /// Optional builder to customize the full set of selection toolbar items.
+  ///
+  /// The builder receives the current [CustomTextEditState] alongside the
+  /// default toolbar entries and should return the complete list that will be
+  /// shown to the user.
+  final CustomTextEditToolbarBuilder? toolbarBuilder;
 
   CustomTextEdit({
     super.key,
@@ -45,6 +62,7 @@ class CustomTextEdit extends StatefulWidget {
     this.keyboardAppearance = Brightness.light,
     this.deleteDetection = false,
     this.enableSuggestions = true,
+    this.toolbarBuilder,
   });
 
   @override
@@ -625,7 +643,7 @@ class CustomTextEditState extends State<CustomTextEdit>
   }
 
   List<ContextMenuButtonItem> _buildContextMenuButtonItems() {
-    return EditableText.getEditableButtonItems(
+    final defaultItems = EditableText.getEditableButtonItems(
       clipboardStatus: _clipboardStatus.value,
       onCopy: copyEnabled
           ? () => copySelection(SelectionChangedCause.toolbar)
@@ -644,6 +662,18 @@ class CustomTextEditState extends State<CustomTextEdit>
       onShare: null,
       onLiveTextInput: null,
     );
+    if (widget.toolbarBuilder == null) {
+      return defaultItems;
+    }
+    final customItems = widget.toolbarBuilder!(
+      context,
+      this,
+      List<ContextMenuButtonItem>.unmodifiable(defaultItems),
+    );
+    if (customItems.isEmpty) {
+      return defaultItems;
+    }
+    return customItems;
   }
 
   @override
