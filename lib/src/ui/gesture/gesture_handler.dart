@@ -408,37 +408,50 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
     final double lineHeight = renderTerminal.cellSize.height;
     final Size handleSize = _selectionControls.getHandleSize(lineHeight);
 
-    final Offset startHandleAnchor = _selectionControls.getHandleAnchor(
+    (_DragHandleType, double)? bestMatch;
+
+    void considerHandle(
+      _DragHandleType type,
+      Offset anchor,
+      TextSelectionHandleType visualType,
+    ) {
+      final Offset handleAnchor = _selectionControls.getHandleAnchor(
+        visualType,
+        lineHeight,
+      );
+      final Rect hitRect = Rect.fromLTWH(
+        anchor.dx - handleAnchor.dx,
+        anchor.dy - handleAnchor.dy,
+        handleSize.width,
+        handleSize.height,
+      ).inflate(_handleTouchRadius);
+
+      if (!hitRect.contains(localPosition)) {
+        return;
+      }
+
+      final Offset center = hitRect.center;
+      final double dx = localPosition.dx - center.dx;
+      final double dy = localPosition.dy - center.dy;
+      final double distanceSquared = dx * dx + dy * dy;
+
+      if (bestMatch == null || distanceSquared < bestMatch!.$2) {
+        bestMatch = (type, distanceSquared);
+      }
+    }
+
+    considerHandle(
+      _DragHandleType.start,
+      geometry.startAnchor,
       startHandleType,
-      lineHeight,
     );
-    final Rect startRect = Rect.fromLTWH(
-      geometry.startAnchor.dx - startHandleAnchor.dx,
-      geometry.startAnchor.dy - startHandleAnchor.dy,
-      handleSize.width,
-      handleSize.height,
-    ).inflate(_handleTouchRadius);
-
-    if (startRect.contains(localPosition)) {
-      return _DragHandleType.start;
-    }
-
-    final Offset endHandleAnchor = _selectionControls.getHandleAnchor(
+    considerHandle(
+      _DragHandleType.end,
+      geometry.endAnchor,
       endHandleType,
-      lineHeight,
     );
-    final Rect endRect = Rect.fromLTWH(
-      geometry.endAnchor.dx - endHandleAnchor.dx,
-      geometry.endAnchor.dy - endHandleAnchor.dy,
-      handleSize.width,
-      handleSize.height,
-    ).inflate(_handleTouchRadius);
 
-    if (endRect.contains(localPosition)) {
-      return _DragHandleType.end;
-    }
-
-    return _DragHandleType.none;
+    return bestMatch?.$1 ?? _DragHandleType.none;
   }
 
   /// 检查点击位置是否在选区附近（容忍度范围内）
