@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
@@ -11,11 +12,12 @@ import 'package:xterm/src/ui/shortcut/shortcuts.dart';
 /// The [defaultItems] argument reflects the actions that would normally be
 /// shown (copy, paste, select all, etc.). Implementations can reuse or replace
 /// them when building the final list of entries to display.
-typedef CustomTextEditToolbarBuilder = List<ContextMenuButtonItem> Function(
-  BuildContext context,
-  CustomTextEditState state,
-  List<ContextMenuButtonItem> defaultItems,
-);
+typedef CustomTextEditToolbarBuilder =
+    List<ContextMenuButtonItem> Function(
+      BuildContext context,
+      CustomTextEditState state,
+      List<ContextMenuButtonItem> defaultItems,
+    );
 
 class CustomTextEdit extends StatefulWidget {
   final Widget child;
@@ -36,6 +38,16 @@ class CustomTextEdit extends StatefulWidget {
   final Brightness keyboardAppearance;
   final bool deleteDetection;
   final bool enableSuggestions;
+
+  /// Optional hook for IME-specific private commands.
+  ///
+  /// When the platform sends a private command via
+  /// [TextInputClient.performPrivateCommand], this callback is invoked with the
+  /// raw [action] string and decoded [data] map after the built-in handlers
+  /// have run.
+  final void Function(String action, Map<String, dynamic> data)?
+  onPrivateCommand;
+
   /// Optional builder to customize the full set of selection toolbar items.
   ///
   /// The builder receives the current [CustomTextEditState] alongside the
@@ -62,6 +74,7 @@ class CustomTextEdit extends StatefulWidget {
     this.keyboardAppearance = Brightness.light,
     this.deleteDetection = false,
     this.enableSuggestions = true,
+    this.onPrivateCommand,
     this.toolbarBuilder,
   });
 
@@ -677,8 +690,7 @@ class CustomTextEditState extends State<CustomTextEdit>
   }
 
   @override
-  bool get copyEnabled =>
-      !_currentEditingState.selection.isCollapsed;
+  bool get copyEnabled => !_currentEditingState.selection.isCollapsed;
 
   @override
   bool get cutEnabled =>
@@ -819,6 +831,124 @@ class CustomTextEditState extends State<CustomTextEdit>
 
   @override
   void performPrivateCommand(String action, Map<String, dynamic> data) {
-    // TODO: implement performPrivateCommand
+    final handled = _handlePrivateCommand(action, data);
+    if (!handled) {
+      final selectionHandled = _applySelectionFromPrivateCommand(data);
+      if (!selectionHandled) {
+        final text = _extractTextFromPrivateCommand(data);
+        if (text != null && text.isNotEmpty && !widget.readOnly) {
+          widget.onInsert(text);
+        }
+      }
+    }
+    widget.onPrivateCommand?.call(action, data);
+  }
+
+  bool _handlePrivateCommand(String action, Map<String, dynamic> data) {
+    final normalized = action.toLowerCase();
+
+    if (normalized.contains('select') && normalized.contains('all')) {
+      if (selectAllEnabled) {
+        selectAll(SelectionChangedCause.toolbar);
+      }
+      return true;
+    }
+
+    if (normalized.contains('cut')) {
+      if (cutEnabled) {
+        cutSelection(SelectionChangedCause.toolbar);
+      }
+      return true;
+    }
+
+    if (normalized.contains('copy')) {
+      if (copyEnabled) {
+        copySelection(SelectionChangedCause.toolbar);
+      }
+      return true;
+    }
+
+    if (normalized.contains('paste')) {
+      if (pasteEnabled) {
+        unawaited(pasteText(SelectionChangedCause.toolbar));
+      }
+      return true;
+    }
+
+    if (normalized.contains('delete') && widget.deleteDetection) {
+      widget.onDelete();
+      return true;
+    }
+
+    return false;
+  }
+
+  static const _kPrivateCommandTextKeys = <String>[
+    'text',
+    'TEXT',
+    'android.intent.extra.PROCESS_TEXT',
+    'androidx.core.view.inputmethod.InputConnectionCompat.CONTENT_DESCRIPTION',
+    'androidx.core.view.inputmethod.InputConnectionCompat.CONTENT_CLIP',
+  ];
+
+  String? _extractTextFromPrivateCommand(Map<String, dynamic> data) {
+    for (final key in _kPrivateCommandTextKeys) {
+      final value = data[key];
+      final text = _coerceToString(value);
+      if (text != null && text.isNotEmpty) {
+        return text;
+      }
+    }
+    return null;
+  }
+
+  bool _applySelectionFromPrivateCommand(Map<String, dynamic> data) {
+    final base = data['selectionBase'];
+    final extent = data['selectionExtent'];
+    if (base is int && extent is int) {
+      final affinityIndex = data['selectionAffinity'];
+      TextAffinity? affinity;
+      if (affinityIndex is int &&
+          affinityIndex >= 0 &&
+          affinityIndex < TextAffinity.values.length) {
+        affinity = TextAffinity.values[affinityIndex];
+      }
+      final selection = TextSelection(
+        baseOffset: base,
+        extentOffset: extent,
+        affinity: affinity ?? TextAffinity.downstream,
+      );
+      textEditingValue = _currentEditingState.copyWith(selection: selection);
+      return true;
+    }
+    return false;
+  }
+
+  String? _coerceToString(dynamic value) {
+    if (value is String) {
+      return value;
+    }
+    if (value is List<int>) {
+      return String.fromCharCodes(value);
+    }
+    if (value is List && value.isNotEmpty) {
+      if (value.first is int) {
+        try {
+          return String.fromCharCodes(value.cast<int>());
+        } catch (_) {
+          return null;
+        }
+      }
+      if (value.first is String) {
+        return value.join();
+      }
+    }
+    if (value is int) {
+      return String.fromCharCode(value);
+    }
+    if (value is Iterable<int>) {
+      return String.fromCharCodes(value);
+    }
+    return null;
   }
 }

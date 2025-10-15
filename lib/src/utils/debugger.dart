@@ -385,6 +385,11 @@ class _TerminalDebuggerHandler implements EscapeHandler {
   }
 
   @override
+  void setAnsiMode(bool enabled) {
+    onCommand('setAnsiMode($enabled)');
+  }
+
+  @override
   void setMouseMode(MouseMode mode) {
     onCommand('setMouseMode($mode)');
   }

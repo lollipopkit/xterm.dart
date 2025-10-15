@@ -105,10 +105,10 @@ class EscapeParser {
     // '#'.charCode: _unsupportedHandler,
     '('.charCode: _escHandleDesignateCharset0, //  SCS - G0
     ')'.charCode: _escHandleDesignateCharset1, //  SCS - G1
-    // '*'.charCode: _voidHandler(1), // TODO: G2 (vt220)
-    // '+'.charCode: _voidHandler(1), // TODO: G3 (vt220)
-    '>'.charCode: _escHandleResetAppKeypadMode, // TODO: Normal Keypad
-    '='.charCode: _escHandleSetAppKeypadMode, // TODO: Application Keypad
+    '*'.charCode: _escHandleDesignateCharset2,
+    '+'.charCode: _escHandleDesignateCharset3,
+    '='.charCode: _escHandleSetAppKeypadMode,
+    '>'.charCode: _escHandleResetAppKeypadMode,
   });
 
   /// `ESC 7` Save Cursor (DECSC)
@@ -173,17 +173,31 @@ class EscapeParser {
     return true;
   }
 
-  /// `ESC >` Reset Application Keypad Mode (DECKPNM)
-  ///
-  /// https://terminalguide.namepad.de/seq/a_esc_x3c_greater_than/
-  bool _escHandleSetAppKeypadMode() {
-    handler.setAppKeypadMode(true);
+  bool _escHandleDesignateCharset2() {
+    if (_queue.isEmpty) return false;
+    final name = _queue.consume();
+    handler.designateCharset(2, name);
+    return true;
+  }
+
+  bool _escHandleDesignateCharset3() {
+    if (_queue.isEmpty) return false;
+    final name = _queue.consume();
+    handler.designateCharset(3, name);
     return true;
   }
 
   /// `ESC =` Set Application Keypad Mode (DECKPAM)
   ///
   /// https://terminalguide.namepad.de/seq/a_esc_x3d_equals/
+  bool _escHandleSetAppKeypadMode() {
+    handler.setAppKeypadMode(true);
+    return true;
+  }
+
+  /// `ESC >` Reset Application Keypad Mode (DECKPNM)
+  ///
+  /// https://terminalguide.namepad.de/seq/a_esc_x3c_greater_than/
   bool _escHandleResetAppKeypadMode() {
     handler.setAppKeypadMode(false);
     return true;
@@ -956,6 +970,8 @@ class EscapeParser {
     switch (mode) {
       case 1:
         return handler.setCursorKeysMode(enabled);
+      case 2:
+        return handler.setAnsiMode(enabled);
       case 3:
         return handler.setColumnMode(enabled);
       case 5:

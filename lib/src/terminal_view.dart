@@ -57,6 +57,7 @@ class TerminalView extends StatefulWidget {
     this.showToolbar = true,
     this.enableSuggestions = true,
     this.scrollBehavior,
+    this.toolbarBuilder,
   });
 
   /// The underlying terminal that this widget renders.
@@ -167,6 +168,9 @@ class TerminalView extends StatefulWidget {
 
   /// Allows customizing the scroll behavior used by the terminal viewport.
   final ScrollBehavior? scrollBehavior;
+
+  /// Optional builder to customize selection toolbar items shown by the input bridge.
+  final CustomTextEditToolbarBuilder? toolbarBuilder;
 
   @override
   State<TerminalView> createState() => TerminalViewState();
@@ -342,6 +346,7 @@ class TerminalViewState extends State<TerminalView>
         },
         onKeyEvent: _handleKeyEvent,
         readOnly: widget.readOnly,
+        toolbarBuilder: widget.toolbarBuilder,
         child: child,
       );
     } else if (!widget.readOnly) {

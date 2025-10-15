@@ -26,6 +26,8 @@ abstract class TerminalState {
 
   bool get autoWrapMode;
 
+  bool get ansiMode;
+
   MouseMode get mouseMode;
 
   MouseReportMode get mouseReportMode;

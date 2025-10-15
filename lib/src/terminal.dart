@@ -49,7 +49,7 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
 
   /// Function that is called when the dimensions of the terminal change.
   void Function(int width, int height, int pixelWidth, int pixelHeight)?
-      onResize;
+  onResize;
 
   /// The [TerminalInputHandler] used by this terminal. [defaultInputHandler] is
   /// used when not specified. User of this class can provide their own
@@ -131,6 +131,8 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
 
   bool _autoWrapMode = true;
 
+  bool _ansiMode = true;
+
   MouseMode _mouseMode = MouseMode.none;
 
   MouseReportMode _mouseReportMode = MouseReportMode.normal;
@@ -177,6 +179,9 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
 
   @override
   bool get autoWrapMode => _autoWrapMode;
+
+  @override
+  bool get ansiMode => _ansiMode;
 
   @override
   MouseMode get mouseMode => _mouseMode;
@@ -268,11 +273,7 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
   /// - [keyInput]
   /// - [textInput]
   /// - [paste]
-  bool charInput(
-    int charCode, {
-    bool alt = false,
-    bool ctrl = false,
-  }) {
+  bool charInput(int charCode, {bool alt = false, bool ctrl = false}) {
     if (ctrl) {
       // a(97) ~ z(122)
       if (charCode >= Ascii.a && charCode <= Ascii.z) {
@@ -332,13 +333,15 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
     TerminalMouseButtonState buttonState,
     CellOffset position,
   ) {
-    final output = mouseHandler?.call(TerminalMouseEvent(
-      button: button,
-      buttonState: buttonState,
-      position: position,
-      state: this,
-      platform: platform,
-    ));
+    final output = mouseHandler?.call(
+      TerminalMouseEvent(
+        button: button,
+        buttonState: buttonState,
+        position: position,
+        state: this,
+        platform: platform,
+      ),
+    );
     if (output != null) {
       onOutput?.call(output);
       return true;
@@ -693,6 +696,11 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
   @override
   void setAutoWrapMode(bool enabled) {
     _autoWrapMode = enabled;
+  }
+
+  @override
+  void setAnsiMode(bool enabled) {
+    _ansiMode = enabled;
   }
 
   @override

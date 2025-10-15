@@ -34,5 +34,23 @@ void main() {
 
       expect(output, '\x1b[1;2H');
     });
+
+    test('uses VT52 mappings when ANSI mode is disabled', () {
+      final outputs = <String>[];
+      final terminal = Terminal(onOutput: outputs.add);
+
+      terminal.keyInput(TerminalKey.arrowUp);
+      expect(outputs.removeLast(), '\x1b[A');
+
+      terminal.write('\x1b[?2l'); // DECANM reset -> enter VT52 mode.
+
+      terminal.keyInput(TerminalKey.arrowUp);
+      expect(outputs.removeLast(), '\x1bA');
+
+      terminal.write('\x1b[?2h'); // DECANM set -> return to ANSI.
+
+      terminal.keyInput(TerminalKey.arrowUp);
+      expect(outputs.removeLast(), '\x1b[A');
+    });
   });
 }

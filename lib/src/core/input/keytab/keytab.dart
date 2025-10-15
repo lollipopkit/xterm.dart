@@ -5,10 +5,7 @@ import 'package:xterm/src/core/input/keytab/keytab_record.dart';
 import 'package:xterm/src/core/input/keytab/keytab_token.dart';
 
 class Keytab {
-  Keytab({
-    required this.name,
-    required this.records,
-  });
+  Keytab({required this.name, required this.records});
 
   factory Keytab.parse(String source) {
     final tokens = tokenize(source).toList();
@@ -27,6 +24,7 @@ class Keytab {
     bool ctrl = false,
     bool alt = false,
     bool shift = false,
+    bool ansiMode = true,
     bool newLineMode = false,
     bool appCursorKeys = false,
     bool appKeyPad = false,
@@ -87,8 +85,7 @@ class Keytab {
         continue;
       }
 
-      // TODO: support VT52
-      if (record.ansi == false) {
+      if (record.ansi != null && record.ansi != ansiMode) {
         continue;
       }
 
