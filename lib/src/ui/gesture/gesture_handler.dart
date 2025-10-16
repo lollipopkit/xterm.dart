@@ -72,6 +72,15 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
   Offset? _lastTapPosition;
   bool _isDraggingHandle = false;
 
+  // 桌面端拖动选区相关状态
+  bool _isMouseDeviceDown = false;
+  bool _isMouseSelectionInProgress = false;
+  CellOffset? _mouseSelectionBase;
+  PointerDeviceKind? _mousePointerKind;
+  bool _suppressNextTapUp = false;
+  bool _mouseTapDownDispatched = false;
+  Offset? _mouseSelectionLastPosition;
+
   // 延迟 tapDown 执行相关
   Timer? _tapDownTimer;
   TapDownDetails? _pendingTapDownDetails;
@@ -172,20 +181,29 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
 
   /// 取消待执行的 tapDown
   void _cancelPendingTapDown() {
+    final hadPending = _pendingTapDownDetails != null || _tapDownTimer != null;
     _tapDownTimer?.cancel();
     _tapDownTimer = null;
     _pendingTapDownDetails = null;
+    if (hadPending) {
+      _mouseTapDownDispatched = false;
+    }
   }
 
   /// 执行待执行的 tapDown
   void _executePendingTapDown() {
     if (_pendingTapDownDetails != null) {
+      final pendingDetails = _pendingTapDownDetails!;
       _tapDown(
         widget.onTapDown,
-        _pendingTapDownDetails!,
+        pendingDetails,
         TerminalMouseButton.left,
         forceCallback: true,
       );
+      if (_isPointerKindMouse(pendingDetails.kind)) {
+        _mouseTapDownDispatched = true;
+        _mouseSelectionLastPosition = pendingDetails.localPosition;
+      }
       _pendingTapDownDetails = null;
     }
   }
@@ -493,6 +511,13 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
     return false;
   }
 
+  bool _isPointerKindMouse(PointerDeviceKind? kind) {
+    return kind == PointerDeviceKind.mouse ||
+        kind == PointerDeviceKind.trackpad ||
+        kind == PointerDeviceKind.stylus ||
+        kind == PointerDeviceKind.invertedStylus;
+  }
+
   void _tapDown(
     GestureTapDownCallback? callback,
     TapDownDetails details,
@@ -531,7 +556,144 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
     }
   }
 
+  bool _handleMouseSelectionUpdate(Offset localPosition) {
+    if (!_isMouseDeviceDown ||
+        !_isPointerKindMouse(_mousePointerKind) ||
+        _isDraggingHandle ||
+        _isDragHandleReady ||
+        widget.terminalController.shouldSendPointerInput(PointerInput.drag)) {
+      return false;
+    }
+
+    final base = _mouseSelectionBase;
+    if (base == null) {
+      return false;
+    }
+
+    final current = renderTerminal.getCellOffset(localPosition);
+    _mouseSelectionLastPosition = localPosition;
+
+    if (!_isMouseSelectionInProgress) {
+      if (current == base) {
+        return false;
+      }
+
+      _isMouseSelectionInProgress = true;
+      _cancelPendingTapDown();
+      _longPressInitialCellOffset = null;
+      _resetDragHandleState();
+
+      if (widget.showToolbar) {
+        widget.terminalView.hideSelectionToolbar();
+      }
+    }
+
+    BufferRangeLine newRange;
+    var didMove = false;
+
+    if (current == base) {
+      newRange = BufferRangeLine(base, base);
+    } else if (current.isBefore(base)) {
+      newRange = BufferRangeLine(current, base);
+      didMove = true;
+    } else {
+      newRange = BufferRangeLine(base, current);
+      didMove = true;
+    }
+
+    _applySelection(newRange);
+
+    if (didMove) {
+      terminalView.autoScrollDown(localPosition);
+    }
+
+    return true;
+  }
+
+  void _dispatchMouseTapUpIfNeeded() {
+    if (!_mouseTapDownDispatched) {
+      return;
+    }
+
+    Offset localPosition;
+
+    if (_mouseSelectionLastPosition != null) {
+      localPosition = _mouseSelectionLastPosition!;
+    } else if (_mouseSelectionBase != null) {
+      final baseOffset = renderTerminal.getOffset(_mouseSelectionBase!);
+      localPosition = baseOffset +
+          Offset(
+            renderTerminal.cellSize.width / 2,
+            renderTerminal.cellSize.height / 2,
+          );
+    } else {
+      localPosition = Offset.zero;
+    }
+
+    final globalPosition = renderTerminal.localToGlobal(localPosition);
+
+    final details = TapUpDetails(
+      kind: _mousePointerKind ?? PointerDeviceKind.mouse,
+      localPosition: localPosition,
+      globalPosition: globalPosition,
+    );
+
+    _tapUp(
+      widget.onTapUp,
+      details,
+      TerminalMouseButton.left,
+      forceCallback: true,
+    );
+
+    _mouseTapDownDispatched = false;
+  }
+
+  void _finishMouseSelection() {
+    if (!_isMouseSelectionInProgress) {
+      _resetMouseSelectionState();
+      return;
+    }
+
+    _cancelPendingTapDown();
+
+    final hasSelection =
+        _selectedRange != null && !_selectedRange!.isCollapsed;
+
+    if (widget.showToolbar && hasSelection) {
+      final Rect? rect = _currentSelectionGlobalRect();
+      if (rect != null) {
+        widget.terminalView.showSelectionToolbar(rect);
+      }
+    }
+
+    _dispatchMouseTapUpIfNeeded();
+    _resetMouseSelectionState();
+    _suppressNextTapUp = true;
+  }
+
+  void _resetMouseSelectionState() {
+    _isMouseDeviceDown = false;
+    _isMouseSelectionInProgress = false;
+    _mouseSelectionBase = null;
+    _mousePointerKind = null;
+    _mouseTapDownDispatched = false;
+    _mouseSelectionLastPosition = null;
+  }
+
   void onTapUp(TapUpDetails details) {
+    if (_suppressNextTapUp) {
+      _suppressNextTapUp = false;
+      _resetMouseSelectionState();
+      return;
+    }
+
+    if (_isMouseSelectionInProgress) {
+      _finishMouseSelection();
+      return;
+    }
+
+    _resetMouseSelectionState();
+
     // 如果有待执行的 tapDown，立即执行
     if (_pendingTapDownDetails != null) {
       _executePendingTapDown();
@@ -570,6 +732,21 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
   }
 
   void onTapDown(TapDownDetails details) {
+    _suppressNextTapUp = false;
+
+    if (_isPointerKindMouse(details.kind)) {
+      _isMouseDeviceDown = true;
+      _mousePointerKind = details.kind;
+      _mouseSelectionBase = renderTerminal.getCellOffset(
+        details.localPosition,
+      );
+      _isMouseSelectionInProgress = false;
+      _mouseSelectionLastPosition = details.localPosition;
+      _mouseTapDownDispatched = false;
+    } else {
+      _resetMouseSelectionState();
+    }
+
     // 优先检查是否点击了拖杆（如果已有选区）
     if (_selectedRange != null && !_selectedRange!.isCollapsed) {
       final dragHandle = _detectDragHandle(details.localPosition);
@@ -882,6 +1059,9 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
         HapticFeedback.selectionClick();
       }
       _handleDragUpdate(details.localFocalPoint);
+    } else if (details.pointerCount == 1 &&
+        _handleMouseSelectionUpdate(details.localFocalPoint)) {
+      return;
     } else if (details.pointerCount == 2 &&
         details.scale != 1.0 &&
         !_isDraggingHandle &&
@@ -892,7 +1072,9 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
   }
 
   void onScaleEnd(ScaleEndDetails details) {
-    if (_activeDragHandle != _DragHandleType.none && _isDraggingHandle) {
+    if (_isMouseSelectionInProgress) {
+      _finishMouseSelection();
+    } else if (_activeDragHandle != _DragHandleType.none && _isDraggingHandle) {
       // 拖杆拖动结束
       HapticFeedback.selectionClick();
       if (widget.showToolbar) {
