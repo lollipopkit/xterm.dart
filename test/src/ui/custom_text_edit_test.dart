@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:xterm/src/ui/custom_text_edit.dart';
 
@@ -17,7 +16,7 @@ void main() {
             onDelete: () => deleteCount++,
             onComposing: (_) {},
             onAction: (_) {},
-            onKeyEvent: (_, __) => KeyEventResult.ignored,
+            onKeyEvent: (_, _) => KeyEventResult.ignored,
             child: const SizedBox.shrink(),
           ),
         ),
@@ -55,7 +54,7 @@ void main() {
             onDelete: () => deleteCount++,
             onComposing: (_) {},
             onAction: (_) {},
-            onKeyEvent: (_, __) => KeyEventResult.ignored,
+            onKeyEvent: (_, _) => KeyEventResult.ignored,
             child: const SizedBox.shrink(),
           ),
         ),

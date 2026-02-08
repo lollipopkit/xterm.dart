@@ -603,7 +603,7 @@ class TerminalViewState extends State<TerminalView>
     final repeatable = _repeatableTerminalKeys.contains(key);
 
     if (isKeyRepeat && repeatable) {
-      _keyRepeatController.handleKeyRepeat(event as KeyRepeatEvent);
+      _keyRepeatController.handleKeyRepeat(event);
     }
 
     final handled = _sendTerminalKey(key);
@@ -617,7 +617,7 @@ class TerminalViewState extends State<TerminalView>
 
     if (isKeyDown && repeatable) {
       _keyRepeatController.handleKeyDown(
-        event as KeyDownEvent,
+        event,
         onRepeat: () {
           _sendTerminalKey(key);
         },

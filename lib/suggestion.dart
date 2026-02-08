@@ -48,7 +48,7 @@ class SuggestionPortal extends StatefulWidget {
 class _SuggestionPortalState extends State<SuggestionPortal> {
   @override
   Widget build(BuildContext context) {
-    return OverlayPortal.targetsRootOverlay(
+    return OverlayPortal(
       controller: widget.controller,
       overlayChildBuilder: (context) {
         return SuggestionLayout(
