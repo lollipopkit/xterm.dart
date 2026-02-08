@@ -200,10 +200,10 @@ class TerminalViewState extends State<TerminalView>
   final _viewportKey = GlobalKey();
 
   Timer? _cursorBlinkTimer;
-  bool _cursorBlinkVisible = true;
+  final _cursorBlinkVisible = ValueNotifier<bool>(true);
   bool _previousBlinkEnabled = false;
 
-  String? _composingText;
+  final _composingText = ValueNotifier<String?>(null);
 
   late TerminalController _controller;
 
@@ -279,6 +279,8 @@ class TerminalViewState extends State<TerminalView>
     _shortcutManager.dispose();
     textSizeNoti.dispose();
     _cursorBlinkTimer?.cancel();
+    _cursorBlinkVisible.dispose();
+    _composingText.dispose();
     super.dispose();
   }
 
@@ -294,25 +296,35 @@ class TerminalViewState extends State<TerminalView>
           return ValueListenableBuilder(
             valueListenable: textSizeNoti,
             builder: (_, textSize, _) {
-              return _TerminalView(
-                key: _viewportKey,
-                terminal: widget.terminal,
-                controller: _controller,
-                offset: offset,
-                padding: MediaQuery.of(context).padding,
-                autoResize: widget.autoResize,
-                textStyle: widget.textStyle.copyWith(fontSize: textSize),
-                textScaler:
-                    widget.textScaler ?? MediaQuery.textScalerOf(context),
-                theme: widget.theme,
-                focusNode: _focusNode,
-                cursorType: widget.cursorType,
-                cursorBlinkEnabled: _cursorBlinkEnabled,
-                cursorBlinkVisible: _cursorBlinkVisible,
-                alwaysShowCursor: widget.alwaysShowCursor,
-                paintSelectionHandles: widget.showToolbar,
-                onEditableRect: _onEditableRect,
-                composingText: _composingText,
+              return ValueListenableBuilder(
+                valueListenable: _cursorBlinkVisible,
+                builder: (_, cursorBlinkVisible, _) {
+                  return ValueListenableBuilder(
+                    valueListenable: _composingText,
+                    builder: (_, composingText, _) {
+                      return _TerminalView(
+                        key: _viewportKey,
+                        terminal: widget.terminal,
+                        controller: _controller,
+                        offset: offset,
+                        padding: MediaQuery.of(context).padding,
+                        autoResize: widget.autoResize,
+                        textStyle: widget.textStyle.copyWith(fontSize: textSize),
+                        textScaler:
+                            widget.textScaler ?? MediaQuery.textScalerOf(context),
+                        theme: widget.theme,
+                        focusNode: _focusNode,
+                        cursorType: widget.cursorType,
+                        cursorBlinkEnabled: _cursorBlinkEnabled,
+                        cursorBlinkVisible: cursorBlinkVisible,
+                        alwaysShowCursor: widget.alwaysShowCursor,
+                        paintSelectionHandles: widget.showToolbar,
+                        onEditableRect: _onEditableRect,
+                        composingText: composingText,
+                      );
+                    },
+                  );
+                },
               );
             },
           );
@@ -480,8 +492,8 @@ class TerminalViewState extends State<TerminalView>
 
     var shouldNotify = blinkChanged;
 
-    if ((resetVisible || !shouldBlink) && !_cursorBlinkVisible) {
-      _cursorBlinkVisible = true;
+    if ((resetVisible || !shouldBlink) && !_cursorBlinkVisible.value) {
+      _cursorBlinkVisible.value = true;
       shouldNotify = true;
     }
 
@@ -490,9 +502,7 @@ class TerminalViewState extends State<TerminalView>
         if (!mounted) {
           return;
         }
-        setState(() {
-          _cursorBlinkVisible = !_cursorBlinkVisible;
-        });
+        _cursorBlinkVisible.value = !_cursorBlinkVisible.value;
       });
     }
 
@@ -560,7 +570,7 @@ class TerminalViewState extends State<TerminalView>
   }
 
   void _onComposing(String? text) {
-    setState(() => _composingText = text);
+    _composingText.value = text;
     _updateCursorBlink(resetVisible: true);
   }
 
