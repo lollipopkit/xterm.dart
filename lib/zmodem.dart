@@ -288,6 +288,7 @@ class ZModemMux {
     _stdoutSubscription.cancel();
     _terminalSink.close();
     _receiveSink?.close();
+    _fileOffers = null;
     _session = null;
   }
 }
