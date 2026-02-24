@@ -48,11 +48,11 @@ class CustomTextEdit extends StatefulWidget {
   final void Function(String action, Map<String, dynamic> data)?
   onPrivateCommand;
 
-  /// Optional builder to customize full set of selection toolbar items.
+  /// Optional builder to customize the full set of selection toolbar items.
   ///
   /// The builder receives current [CustomTextEditState] alongside
-  /// default toolbar entries and should return complete list that will be
-  /// shown to user.
+  /// the default toolbar entries and should return the complete list
+  /// to be shown to the user.
   final CustomTextEditToolbarBuilder? toolbarBuilder;
 
   /// Callback to check if there is a selection in the terminal.
@@ -61,7 +61,7 @@ class CustomTextEdit extends StatefulWidget {
   /// Callback to get the selected text from the terminal.
   final String Function()? getSelectedText;
 
-  /// Callback to show toast after copy operation.
+  /// Callback invoked after a copy operation completes.
   final void Function()? onCopied;
 
   /// Callback to select all text in the terminal.
@@ -134,7 +134,6 @@ class CustomTextEditState extends State<CustomTextEdit>
           setState(() {
             _currentEditingState = _controller!.value;
           });
-          // selection/composing 变更回调
           if (widget.onSelectionChanged != null &&
               oldValue.selection != _currentEditingState.selection) {
             widget.onSelectionChanged!(_currentEditingState.selection, null);
@@ -296,7 +295,6 @@ class CustomTextEditState extends State<CustomTextEdit>
     if (widget.controller != null && widget.controller!.value != value) {
       widget.controller!.value = value;
     }
-    // selection/composing 变更回调
     if (widget.onSelectionChanged != null &&
         oldValue.selection != value.selection) {
       widget.onSelectionChanged!(value.selection, null);
@@ -307,7 +305,7 @@ class CustomTextEditState extends State<CustomTextEdit>
     }
     _connection?.setEditingState(value);
     _showCaretOnScreen();
-    setState(() {}); // UI 响应
+    setState(() {});
   }
 
   void setEditableRect(Rect rect, Rect caretRect) {
@@ -641,7 +639,7 @@ class CustomTextEditState extends State<CustomTextEdit>
     final screenSize = mediaQuery.size;
 
     final spaceAbove = anchorRect.top;
-    final spaceBelow = screenSize.height - anchorRect.bottom;
+    final spaceBelow = screenSize.height - anchorRect.bottom - mediaQuery.viewInsets.bottom;
 
     final Offset primaryAnchor;
     final Offset secondaryAnchor;
@@ -741,16 +739,17 @@ class CustomTextEditState extends State<CustomTextEdit>
 
   @override
   bool get copyEnabled {
-    // 优先使用 hasSelection 回调判断是否有选区
     if (widget.hasSelection != null) {
       return widget.hasSelection!();
     }
-    // 降级到默认判断
     return !_currentEditingState.selection.isCollapsed;
   }
 
   @override
   bool get pasteEnabled => widget.onPaste != null || !widget.readOnly;
+
+  @override
+  bool get cutEnabled => false;
 
   @override
   bool get selectAllEnabled =>
@@ -765,31 +764,28 @@ class CustomTextEditState extends State<CustomTextEdit>
     if (!copyEnabled) {
       return;
     }
-    
-    // 优先使用 getSelectedText 回调获取选区内容
+
     String selectedText;
     if (widget.getSelectedText != null) {
       selectedText = widget.getSelectedText!();
     } else {
-      // 降级到默认获取方式
       selectedText = _currentEditingState.selection.textInside(
         _currentEditingState.text,
       );
     }
-    
+
     if (selectedText.isEmpty) {
       return;
     }
-    
+
     Clipboard.setData(
       ClipboardData(
         text: selectedText,
       ),
     );
-    
-    // 调用复制完成回调，用于显示 Toast 和清除选区
+
     widget.onCopied?.call();
-    
+
     if (cause == SelectionChangedCause.toolbar) {
       hideToolbar();
     }
@@ -846,7 +842,6 @@ class CustomTextEditState extends State<CustomTextEdit>
 
   @override
   void cutSelection(SelectionChangedCause cause) {
-    // 终端是只读的，不支持剪切操作
   }
 
   @override

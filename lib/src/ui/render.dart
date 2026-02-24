@@ -358,10 +358,6 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
   }
 
   /// Selects all content in the terminal buffer.
-  ///
-  /// Creates anchors at the top-left (0,0) and bottom-right
-  /// (buffer.viewWidth, buffer.height - 1) and sets the selection.
-  /// Mutates the controller selection. Operates on the current _terminal.buffer.
   void selectAll() {
     final buffer = _terminal.buffer;
     if (buffer.height == 0) {
