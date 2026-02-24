@@ -130,7 +130,6 @@ class TerminalController with ChangeNotifier {
     required CellOffset newBegin,
     required CellOffset newEnd,
   }) {
-    // 优化动画：减少时长，使用简单曲线，提升响应速度
     final controller = AnimationController(
       duration: type == SelectionAnimationType.insert 
           ? const Duration(milliseconds: 100)
@@ -142,7 +141,6 @@ class TerminalController with ChangeNotifier {
     late Animation<Offset> positionAnimation;
 
     if (type == SelectionAnimationType.insert) {
-      // 插入动画：简化效果，使用快速淡入
       scaleAnimation = Tween<double>(
         begin: 1.0,
         end: 1.0,
@@ -150,14 +148,12 @@ class TerminalController with ChangeNotifier {
         parent: controller,
         curve: Curves.easeOut,
       ));
-      
-      // 插入时位置不变
+
       positionAnimation = Tween<Offset>(
         begin: Offset.zero,
         end: Offset.zero,
       ).animate(controller);
     } else {
-      // 更新动画：简化位置移动
       scaleAnimation = Tween<double>(
         begin: 1.0,
         end: 1.0,
@@ -179,7 +175,6 @@ class TerminalController with ChangeNotifier {
       ));
     }
 
-    // 动画完成后清理
     controller.addStatusListener((status) {
       if (status == AnimationStatus.completed) {
         _selectionAnimation?.dispose();
@@ -188,12 +183,10 @@ class TerminalController with ChangeNotifier {
       }
     });
 
-    // 动画过程中触发重绘
     controller.addListener(() {
       notifyListeners();
     });
 
-    // 启动动画
     controller.forward();
 
     return SelectionAnimation(

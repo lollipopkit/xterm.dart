@@ -1110,23 +1110,18 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
     final newStart = isBefore ? currentCellOffset : _dragHandleFixedPoint!;
     final newEnd = isBefore ? _dragHandleFixedPoint! : currentCellOffset;
 
-    // 确保选区不为空
-    if (newStart != newEnd) {
-      // 拖杆切换逻辑：当拖动超过固定点时切换拖杆
-      final draggingStart = _activeDragHandle == _DragHandleType.start;
-      if (draggingStart && currentCellOffset.isAfter(_dragHandleFixedPoint!)) {
-        _activeDragHandle = _DragHandleType.end;
-        _dragHandleFixedPoint = newStart;
-      } else if (!draggingStart && isBefore) {
-        _activeDragHandle = _DragHandleType.start;
-        _dragHandleFixedPoint = newEnd;
-      }
-
-      _applySelection(BufferRangeLine(newStart, newEnd));
-
-      // 自动滚动
-      terminalView.autoScrollDown(localPosition);
+    final draggingStart = _activeDragHandle == _DragHandleType.start;
+    if (draggingStart && currentCellOffset.isAfter(_dragHandleFixedPoint!)) {
+      _activeDragHandle = _DragHandleType.end;
+      _dragHandleFixedPoint = newStart;
+    } else if (!draggingStart && isBefore) {
+      _activeDragHandle = _DragHandleType.start;
+      _dragHandleFixedPoint = newEnd;
     }
+
+    _applySelection(BufferRangeLine(newStart, newEnd));
+
+    terminalView.autoScrollDown(localPosition);
   }
 
   void _handleZoomUpdate(ScaleUpdateDetails details) {

@@ -636,32 +636,24 @@ class CustomTextEditState extends State<CustomTextEdit>
     }
 
     _clipboardStatus.update();
-    
-    // 优化工具栏定位：优先在选区上方显示，上方空间不足时在下方显示
-    // 符合 Android 原生文本选择行为
+
     final mediaQuery = MediaQuery.of(context);
     final screenSize = mediaQuery.size;
-    
-    // 计算选区上方和下方的可用空间
+
     final spaceAbove = anchorRect.top;
     final spaceBelow = screenSize.height - anchorRect.bottom;
-    
-    // 根据可用空间选择最佳位置
+
     final Offset primaryAnchor;
     final Offset secondaryAnchor;
-    
-    // 优先在上方显示，但需要至少 48dp 的空间
+
     const minSpace = 48.0;
     if (spaceAbove >= minSpace) {
-      // 上方空间充足，工具栏显示在选区上方
       primaryAnchor = anchorRect.topCenter;
       secondaryAnchor = anchorRect.bottomCenter;
     } else if (spaceBelow >= minSpace) {
-      // 上方空间不足，下方空间充足，工具栏显示在选区下方
       primaryAnchor = anchorRect.bottomCenter;
       secondaryAnchor = anchorRect.topCenter;
     } else {
-      // 上下空间都不足，选择空间较大的一侧
       if (spaceAbove >= spaceBelow) {
         primaryAnchor = anchorRect.topCenter;
         secondaryAnchor = anchorRect.bottomCenter;

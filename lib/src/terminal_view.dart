@@ -387,7 +387,7 @@ class TerminalViewState extends State<TerminalView>
         hasSelection: () => _controller.selection != null,
         getSelectedText: () => renderTerminal.selectedText ?? '',
         onCopied: widget.onCopied,
-        onSelectAll: widget.onSelectAll,
+        onSelectAll: widget.onSelectAll ?? () => renderTerminal.selectAll(),
         onPaste: widget.onPaste,
         child: child,
       );
