@@ -68,6 +68,9 @@ class TerminalView extends StatefulWidget {
     this.enableSuggestions = true,
     this.scrollBehavior,
     this.toolbarBuilder,
+    this.onCopied,
+    this.onSelectAll,
+    this.onPaste,
   });
 
   /// The underlying terminal that this widget renders.
@@ -181,6 +184,15 @@ class TerminalView extends StatefulWidget {
 
   /// Optional builder to customize selection toolbar items shown by the input bridge.
   final CustomTextEditToolbarBuilder? toolbarBuilder;
+
+  /// Callback to show toast after copy operation.
+  final void Function()? onCopied;
+
+  /// Callback to select all text in the terminal.
+  final void Function()? onSelectAll;
+
+  /// Callback to paste text from clipboard to terminal.
+  final void Function()? onPaste;
 
   @override
   State<TerminalView> createState() => TerminalViewState();
@@ -372,6 +384,11 @@ class TerminalViewState extends State<TerminalView>
         onKeyEvent: _handleKeyEvent,
         readOnly: widget.readOnly,
         toolbarBuilder: widget.toolbarBuilder,
+        hasSelection: () => _controller.selection != null,
+        getSelectedText: () => renderTerminal.selectedText ?? '',
+        onCopied: widget.onCopied,
+        onSelectAll: widget.onSelectAll,
+        onPaste: widget.onPaste,
         child: child,
       );
     } else if (!widget.readOnly) {

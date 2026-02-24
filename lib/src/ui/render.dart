@@ -357,6 +357,13 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     );
   }
 
+  void selectAll() {
+    final buffer = _terminal.buffer;
+    final start = buffer.createAnchor(0, 0);
+    final end = buffer.createAnchor(buffer.viewWidth, buffer.height - 1);
+    _controller.setSelection(start, end);
+  }
+
   void clearSelection() {
     _controller.clearSelection();
   }

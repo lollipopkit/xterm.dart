@@ -130,10 +130,11 @@ class TerminalController with ChangeNotifier {
     required CellOffset newBegin,
     required CellOffset newEnd,
   }) {
+    // 优化动画：减少时长，使用简单曲线，提升响应速度
     final controller = AnimationController(
       duration: type == SelectionAnimationType.insert 
-          ? const Duration(milliseconds: 200)
-          : const Duration(milliseconds: 300),
+          ? const Duration(milliseconds: 100)
+          : const Duration(milliseconds: 150),
       vsync: _vsync,
     );
 
@@ -141,13 +142,13 @@ class TerminalController with ChangeNotifier {
     late Animation<Offset> positionAnimation;
 
     if (type == SelectionAnimationType.insert) {
-      // 插入动画：130% 缩小到 100%
+      // 插入动画：简化效果，使用快速淡入
       scaleAnimation = Tween<double>(
-        begin: 1.3,
+        begin: 1.0,
         end: 1.0,
       ).animate(CurvedAnimation(
         parent: controller,
-        curve: Curves.elasticOut,
+        curve: Curves.easeOut,
       ));
       
       // 插入时位置不变
@@ -156,7 +157,7 @@ class TerminalController with ChangeNotifier {
         end: Offset.zero,
       ).animate(controller);
     } else {
-      // 更新动画：位置从旧位置移动到新位置
+      // 更新动画：简化位置移动
       scaleAnimation = Tween<double>(
         begin: 1.0,
         end: 1.0,
@@ -174,7 +175,7 @@ class TerminalController with ChangeNotifier {
         end: Offset.zero,
       ).animate(CurvedAnimation(
         parent: controller,
-        curve: Curves.easeOutCubic,
+        curve: Curves.easeOut,
       ));
     }
 

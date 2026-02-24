@@ -84,7 +84,7 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
   // 延迟 tapDown 执行相关
   Timer? _tapDownTimer;
   TapDownDetails? _pendingTapDownDetails;
-  static const Duration _tapDownDelay = Duration(milliseconds: 100); // 延迟时间
+  static const Duration _tapDownDelay = Duration(milliseconds: 50); // 优化延迟：减少等待时间
 
   static final TextSelectionControls _materialSelectionControls =
       MaterialTextSelectionControls();
@@ -712,8 +712,6 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
 
     widget.onTapUp?.call(details);
 
-    final cellOffset = renderTerminal.getCellOffset(details.localPosition);
-
     if (_selectedRange != null) {
       // 检查是否点击了拖杆
       final dragHandle = _detectDragHandle(details.localPosition);
@@ -722,12 +720,8 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
         return;
       }
 
-      if (_selectionContains(_selectedRange!, cellOffset)) {
-        // 点击选中区域内部，保持选择
-      } else {
-        // 点击选中区域外部，清除选择
-        _clearSelection();
-      }
+      // 点击选区内部或外部都清除选择
+      _clearSelection();
     }
   }
 
@@ -945,6 +939,7 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
     } else {
       renderTerminal.selectBufferRange(normalized);
     }
+    
     _syncSelectionFromController();
   }
 
@@ -980,23 +975,29 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
     final cellOffset = renderTerminal.getCellOffset(details.localPosition);
 
     if (details.kind == PointerDeviceKind.touch) {
+      // 触摸设备：选中整个单词
       final BufferRangeLine? wordRange = renderTerminal.selectWord(cellOffset);
       if (wordRange != null) {
         _applySelection(wordRange);
       }
     } else {
+      // 鼠标设备：选中单个字符
       renderTerminal.selectCharacters(cellOffset, cellOffset);
       if (widget.terminalController.selection != null) {
         _applySelection(BufferRangeLine(cellOffset, cellOffset));
       }
     }
 
+    // 显示工具栏（触摸和鼠标设备统一处理）
     if (widget.showToolbar) {
       final Rect? selectionRect = _currentSelectionGlobalRect();
       if (selectionRect != null) {
         widget.terminalView.showSelectionToolbar(selectionRect);
       }
     }
+
+    // 提供触觉反馈
+    HapticFeedback.lightImpact();
   }
 
   void onScaleStart(ScaleStartDetails details) {
@@ -1097,45 +1098,26 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
     final currentCellOffset = renderTerminal.getCellOffset(localPosition);
 
     // 防止拖动到相同位置
-    if (currentCellOffset ==
-        (_activeDragHandle == _DragHandleType.start
-            ? _selectedRange?.begin
-            : _selectedRange?.end)) {
+    final currentHandleEnd = _activeDragHandle == _DragHandleType.start
+        ? _selectedRange?.begin
+        : _selectedRange?.end;
+    if (currentCellOffset == currentHandleEnd) {
       return;
     }
 
-    // 根据拖动的拖杆更新选区
-    CellOffset newStart, newEnd;
-    if (_activeDragHandle == _DragHandleType.start) {
-      // 拖动开始拖杆
-      if (currentCellOffset.isBefore(_dragHandleFixedPoint!) ||
-          currentCellOffset == _dragHandleFixedPoint!) {
-        newStart = currentCellOffset;
-        newEnd = _dragHandleFixedPoint!;
-      } else {
-        newStart = _dragHandleFixedPoint!;
-        newEnd = currentCellOffset;
-      }
-    } else {
-      // 拖动结束拖杆
-      if (currentCellOffset.isBefore(_dragHandleFixedPoint!) ||
-          currentCellOffset == _dragHandleFixedPoint!) {
-        newStart = currentCellOffset;
-        newEnd = _dragHandleFixedPoint!;
-      } else {
-        newStart = _dragHandleFixedPoint!;
-        newEnd = currentCellOffset;
-      }
-    }
+    // 计算选区范围（统一处理开始和结束拖杆）
+    final isBefore = currentCellOffset.isBefore(_dragHandleFixedPoint!);
+    final newStart = isBefore ? currentCellOffset : _dragHandleFixedPoint!;
+    final newEnd = isBefore ? _dragHandleFixedPoint! : currentCellOffset;
 
     // 确保选区不为空
     if (newStart != newEnd) {
-      final bool draggingStart = _activeDragHandle == _DragHandleType.start;
+      // 拖杆切换逻辑：当拖动超过固定点时切换拖杆
+      final draggingStart = _activeDragHandle == _DragHandleType.start;
       if (draggingStart && currentCellOffset.isAfter(_dragHandleFixedPoint!)) {
         _activeDragHandle = _DragHandleType.end;
         _dragHandleFixedPoint = newStart;
-      } else if (!draggingStart &&
-          currentCellOffset.isBefore(_dragHandleFixedPoint!)) {
+      } else if (!draggingStart && isBefore) {
         _activeDragHandle = _DragHandleType.start;
         _dragHandleFixedPoint = newEnd;
       }
@@ -1195,14 +1177,30 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
       }
     }
 
-    // 执行原有的长按逻辑 - 仅用于初始化选区
+    // 执行原有的长按逻辑 - 直接选中单词
     _clearSelection();
 
-    _longPressInitialCellOffset = renderTerminal.getCellOffset(
+    final longPressCellOffset = renderTerminal.getCellOffset(
       details.localPosition,
     );
 
-    _applySelection(BufferRangeLine.collapsed(_longPressInitialCellOffset!));
+    // 直接选中单词而非折叠选区（符合 Android 原生行为）
+    final wordRange = renderTerminal.selectWord(longPressCellOffset);
+    if (wordRange != null) {
+      _applySelection(wordRange);
+
+      // 立即显示工具栏
+      if (widget.showToolbar && !wordRange.isCollapsed) {
+        final Rect? selectionRect = _currentSelectionGlobalRect();
+        if (selectionRect != null) {
+          widget.terminalView.showSelectionToolbar(selectionRect);
+        }
+      }
+    } else {
+      // 如果无法选中单词，回退到选中单个字符
+      _longPressInitialCellOffset = longPressCellOffset;
+      _applySelection(BufferRangeLine.collapsed(longPressCellOffset));
+    }
 
     // 重置拖杆状态
     _resetDragHandleState();
