@@ -778,13 +778,9 @@ class CustomTextEditState extends State<CustomTextEdit>
       return;
     }
 
-    Clipboard.setData(
-      ClipboardData(
-        text: selectedText,
-      ),
-    );
-
-    widget.onCopied?.call();
+    Clipboard.setData(ClipboardData(text: selectedText)).then((_) {
+      widget.onCopied?.call();
+    });
 
     if (cause == SelectionChangedCause.toolbar) {
       hideToolbar();
