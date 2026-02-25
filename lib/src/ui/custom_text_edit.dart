@@ -50,7 +50,7 @@ class CustomTextEdit extends StatefulWidget {
 
   /// Optional builder to customize the full set of selection toolbar items.
   ///
-  /// The builder receives current [CustomTextEditState] alongside
+  /// The builder receives the current [CustomTextEditState] alongside
   /// the default toolbar entries and should return the complete list
   /// to be shown to the user.
   final CustomTextEditToolbarBuilder? toolbarBuilder;
@@ -829,6 +829,8 @@ class CustomTextEditState extends State<CustomTextEdit>
   void selectAll(SelectionChangedCause cause) {
     if (widget.onSelectAll != null) {
       widget.onSelectAll!();
+      _menuController.markNeedsBuild();
+      setState(() {});
     } else if (!widget.readOnly && _currentEditingState.text.isNotEmpty) {
       textEditingValue = _currentEditingState.copyWith(
         selection: TextSelection(
