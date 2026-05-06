@@ -18,10 +18,8 @@ const _cellAttributes = 2;
 const _cellContent = 3;
 
 class BufferLine with IndexedItem {
-  BufferLine(
-    this._length, {
-    this.isWrapped = false,
-  }) : _data = Uint32List(_calcCapacity(_length) * _cellSize);
+  BufferLine(this._length, {this.isWrapped = false})
+    : _data = Uint32List(_calcCapacity(_length) * _cellSize);
 
   int _length;
 
@@ -71,11 +69,7 @@ class BufferLine with IndexedItem {
 
   CellData createCellData(int index) {
     final cellData = CellData.empty();
-    final offset = index * _cellSize;
-    _data[offset + _cellForeground] = cellData.foreground;
-    _data[offset + _cellBackground] = cellData.background;
-    _data[offset + _cellAttributes] = cellData.flags;
-    _data[offset + _cellContent] = cellData.content;
+    getCellData(index, cellData);
     return cellData;
   }
 
@@ -135,17 +129,25 @@ class BufferLine with IndexedItem {
   /// Erase cells whose index satisfies [start] <= index < [end]. Erased cells
   /// are filled with [style].
   void eraseRange(int start, int end, CursorStyle style) {
-    // reset cell one to the left if start is second cell of a wide char
+    if (start < 0) {
+      start = 0;
+    }
+    end = min(end, _length);
+
+    if (start >= end) {
+      return;
+    }
+
+    // Reset cell one to the left if start is the second cell of a wide char.
     if (start > 0 && getWidth(start - 1) == 2) {
       eraseCell(start - 1, style);
     }
 
-    // reset cell one to the right if end is second cell of a wide char
+    // Reset cell one to the right if end splits a wide char.
     if (end < _length && getWidth(end - 1) == 2) {
-      eraseCell(end - 1, style);
+      eraseCell(end, style);
     }
 
-    end = min(end, _length);
     for (var i = start; i < end; i++) {
       eraseCell(i, style);
     }
@@ -154,8 +156,12 @@ class BufferLine with IndexedItem {
   /// Remove [count] cells starting at [start]. Cells that are empty after the
   /// removal are filled with [style].
   void removeCells(int start, int count, [CursorStyle? style]) {
-    assert(start >= 0 && start < _length);
+    assert(start >= 0 && start <= _length);
     assert(count >= 0 && start + count <= _length);
+
+    if (count == 0) {
+      return;
+    }
 
     style ??= CursorStyle.empty;
 
@@ -176,8 +182,12 @@ class BufferLine with IndexedItem {
       eraseCell(start - 1, style);
     }
 
+    if (start < _length && getWidth(start) == 0) {
+      eraseCell(start, style);
+    }
+
     // Update anchors, remove anchors that are inside the removed range.
-    for (var i = 0; i < _anchors.length; i++) {
+    for (var i = _anchors.length - 1; i >= 0; i--) {
       final anchor = _anchors[i];
       if (anchor.x >= start) {
         if (anchor.x < start + count) {
@@ -191,6 +201,13 @@ class BufferLine with IndexedItem {
 
   /// Inserts [count] cells at [start]. New cells are initialized with [style].
   void insertCells(int start, int count, [CursorStyle? style]) {
+    assert(start >= 0 && start <= _length);
+    assert(count >= 0);
+
+    if (count == 0 || start == _length) {
+      return;
+    }
+
     style ??= CursorStyle.empty;
 
     if (start > 0 && getWidth(start - 1) == 2) {
@@ -215,10 +232,10 @@ class BufferLine with IndexedItem {
       eraseCell(_length - 1, style);
     }
 
-    // Update anchors, move anchors that are after the inserted range.
-    for (var i = 0; i < _anchors.length; i++) {
+    // Update anchors, move anchors that are at or after the insertion point.
+    for (var i = _anchors.length - 1; i >= 0; i--) {
       final anchor = _anchors[i];
-      if (anchor.x >= start + count) {
+      if (anchor.x >= start) {
         anchor.reposition(anchor.x + count);
 
         // Remove anchors that are now outside the buffer.
@@ -248,6 +265,10 @@ class BufferLine with IndexedItem {
 
     _length = length;
 
+    if (_length > 0 && getWidth(_length - 1) == 2) {
+      resetCell(_length - 1);
+    }
+
     for (var i = 0; i < _anchors.length; i++) {
       final anchor = _anchors[i];
       if (anchor.x > _length) {
@@ -259,10 +280,8 @@ class BufferLine with IndexedItem {
   /// Returns the offset of the last cell that has content from the start of
   /// the line.
   int getTrimmedLength([int? cols]) {
-    final maxCols = _data.length ~/ _cellSize;
-
-    if (cols == null || cols > maxCols) {
-      cols = maxCols;
+    if (cols == null || cols > _length) {
+      cols = _length;
     }
 
     if (cols <= 0) {
@@ -287,6 +306,14 @@ class BufferLine with IndexedItem {
   /// Copies [len] cells from [src] starting at [srcCol] to [dstCol] at this
   /// line.
   void copyFrom(BufferLine src, int srcCol, int dstCol, int len) {
+    RangeError.checkNotNegative(len, 'len');
+    RangeError.checkNotNegative(dstCol, 'dstCol');
+    RangeError.checkValueInInterval(srcCol, 0, src._length - len, 'srcCol');
+
+    if (len == 0) {
+      return;
+    }
+
     resize(dstCol + len);
 
     // data.setRange(
@@ -300,6 +327,30 @@ class BufferLine with IndexedItem {
 
     for (var i = 0; i < len * _cellSize; i++) {
       _data[dstOffset++] = src._data[srcOffset++];
+    }
+
+    _cleanupWideFragmentsAroundRange(dstCol, dstCol + len);
+  }
+
+  void _cleanupWideFragmentsAroundRange(int start, int end) {
+    if (start > 0 && getWidth(start - 1) == 2) {
+      resetCell(start - 1);
+    }
+
+    if (start < _length && getWidth(start) == 0) {
+      resetCell(start);
+    }
+
+    if (end <= 0 || end > _length) {
+      return;
+    }
+
+    if (getWidth(end - 1) == 2) {
+      if (end == _length || getWidth(end) != 0) {
+        resetCell(end - 1);
+      }
+    } else if (end < _length && getWidth(end) == 0) {
+      resetCell(end);
     }
   }
 
@@ -344,14 +395,16 @@ class BufferLine with IndexedItem {
   }
 
   CellAnchor createAnchor(int offset) {
+    RangeError.checkValueInInterval(offset, 0, _length, 'offset');
+
     final anchor = CellAnchor(offset, owner: this);
     _anchors.add(anchor);
     return anchor;
   }
 
   void dispose() {
-    for (final anchor in _anchors) {
-      anchor.dispose();
+    for (var i = _anchors.length - 1; i >= 0; i--) {
+      _anchors[i].dispose();
     }
   }
 
@@ -366,8 +419,8 @@ class BufferLine with IndexedItem {
 /// position to each other after mutations to the buffer.
 class CellAnchor {
   CellAnchor(int offset, {BufferLine? owner})
-      : _offset = offset,
-        _owner = owner;
+    : _offset = offset,
+      _owner = owner;
 
   int _offset;
 

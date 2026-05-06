@@ -146,16 +146,10 @@ void main() {
         terminal.write('line$i\r\n');
       }
 
-      print(terminal.buffer);
-
       terminal.setMargins(2, 6);
       terminal.setCursor(0, 4);
 
-      print(terminal.buffer.absoluteCursorY);
-
       terminal.buffer.insertLines(1);
-
-      print(terminal.buffer);
 
       expect(terminal.buffer.lines[3].toString(), 'line3');
       expect(terminal.buffer.lines[4].toString(), ''); // inserted
@@ -228,6 +222,33 @@ void main() {
     expect(terminal.buffer.lines[7].toString(), '');
     expect(terminal.buffer.lines[8].toString(), 'line9');
     expect(terminal.buffer.lines[9].toString(), 'line10');
+  });
+
+  group('Buffer.eraseLineToCursor()', () {
+    test('erases the cursor cell', () {
+      final terminal = Terminal();
+      terminal.resize(3, 3);
+      terminal.write('abc');
+
+      terminal.setCursor(1, 0);
+      terminal.buffer.eraseLineToCursor();
+
+      expect(terminal.buffer.lines[0].toString(), 'c');
+    });
+  });
+
+  group('Buffer.eraseDisplayToCursor()', () {
+    test('erases the cursor cell', () {
+      final terminal = Terminal();
+      terminal.resize(3, 3);
+      terminal.write('abc\r\ndef');
+
+      terminal.setCursor(1, 1);
+      terminal.buffer.eraseDisplayToCursor();
+
+      expect(terminal.buffer.lines[0].toString(), '');
+      expect(terminal.buffer.lines[1].toString(), 'f');
+    });
   });
 
   group('Buffer.eraseDisplayFromCursor()', () {

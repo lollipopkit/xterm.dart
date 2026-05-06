@@ -1,4 +1,4 @@
-import 'dart:math' show max;
+import 'dart:math' show max, min;
 
 import 'package:xterm/src/base/observable.dart';
 import 'package:xterm/src/core/buffer/buffer.dart';
@@ -17,6 +17,7 @@ import 'package:xterm/src/core/mouse/mode.dart';
 import 'package:xterm/src/core/platform.dart';
 import 'package:xterm/src/core/state.dart';
 import 'package:xterm/src/core/tabs.dart';
+import 'package:xterm/src/ui/cursor_type.dart';
 import 'package:xterm/src/utils/ascii.dart';
 import 'package:xterm/src/utils/circular_buffer.dart';
 
@@ -141,6 +142,8 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
 
   bool _cursorVisibleMode = true;
 
+  TerminalCursorType? _cursorTypeOverride;
+
   bool _appKeypadMode = false;
 
   bool _reportFocusMode = false;
@@ -148,6 +151,10 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
   bool _altBufferMouseScrollMode = false;
 
   bool _bracketedPasteMode = false;
+
+  bool _savedOriginMode = false;
+
+  bool _savedAutoWrapMode = true;
 
   /* State getters */
 
@@ -195,6 +202,8 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
   @override
   bool get cursorVisibleMode => _cursorVisibleMode;
 
+  TerminalCursorType? get cursorTypeOverride => _cursorTypeOverride;
+
   @override
   bool get appKeypadMode => _appKeypadMode;
 
@@ -230,6 +239,10 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
   /// updates the states of the terminal and emits events such as [onBell] or
   /// [onTitleChange] when the escape sequences in [data] request it.
   void write(String data) {
+    if (data.isEmpty) {
+      return;
+    }
+
     _parser.write(data);
     notifyListeners();
   }
@@ -275,6 +288,13 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
   /// - [paste]
   bool charInput(int charCode, {bool alt = false, bool ctrl = false}) {
     if (ctrl) {
+      // A(65) ~ Z(90)
+      if (charCode >= Ascii.A && charCode <= Ascii.Z) {
+        final output = charCode - Ascii.A + 1;
+        onOutput?.call(String.fromCharCode(output));
+        return true;
+      }
+
       // a(97) ~ z(122)
       if (charCode >= Ascii.a && charCode <= Ascii.z) {
         final output = charCode - Ascii.a + 1;
@@ -309,7 +329,17 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
   /// - [charInput]
   /// - [paste]
   void textInput(String text) {
+    if (text.isEmpty) {
+      return;
+    }
+
     onOutput?.call(text);
+  }
+
+  void focusInput(bool focused) {
+    if (reportFocusMode) {
+      onOutput?.call(focused ? '\x1b[I' : '\x1b[O');
+    }
   }
 
   /// Similar to [textInput], except that when the program tells the terminal
@@ -320,6 +350,10 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
   /// See also:
   /// - [textInput]
   void paste(String text) {
+    if (text.isEmpty) {
+      return;
+    }
+
     if (_bracketedPasteMode) {
       onOutput?.call(_emitter.bracketedPaste(text));
     } else {
@@ -333,6 +367,13 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
     TerminalMouseButtonState buttonState,
     CellOffset position,
   ) {
+    if (position.x < 0 ||
+        position.y < 0 ||
+        position.x >= viewWidth ||
+        position.y >= viewHeight) {
+      return false;
+    }
+
     final output = mouseHandler?.call(
       TerminalMouseEvent(
         button: button,
@@ -346,7 +387,28 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
       onOutput?.call(output);
       return true;
     }
+
+    if (_shouldConvertAltBufferWheelToCursorKey(button, buttonState)) {
+      return keyInput(
+        button == TerminalMouseButton.wheelUp
+            ? TerminalKey.arrowUp
+            : TerminalKey.arrowDown,
+      );
+    }
+
     return false;
+  }
+
+  bool _shouldConvertAltBufferWheelToCursorKey(
+    TerminalMouseButton button,
+    TerminalMouseButtonState buttonState,
+  ) {
+    return _altBufferMouseScrollMode &&
+        isUsingAltBuffer &&
+        _mouseMode == MouseMode.none &&
+        buttonState == TerminalMouseButtonState.down &&
+        (button == TerminalMouseButton.wheelUp ||
+            button == TerminalMouseButton.wheelDown);
   }
 
   /// Resize the terminal screen. [newWidth] and [newHeight] should be greater
@@ -388,8 +450,10 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
 
   @override
   void writeChar(int char) {
-    _precedingCodepoint = char;
-    _buffer.writeChar(char);
+    final writtenCodepoint = _buffer.writeChar(char);
+    if (writtenCodepoint != null) {
+      _precedingCodepoint = writtenCodepoint;
+    }
   }
 
   /* SBC */
@@ -401,7 +465,7 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
 
   @override
   void backspaceReturn() {
-    _buffer.moveCursorX(-1);
+    _buffer.backspace();
   }
 
   @override
@@ -411,8 +475,15 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
     if (nextStop != null) {
       _buffer.setCursorX(nextStop);
     } else {
-      _buffer.setCursorX(_viewWidth);
-      _buffer.cursorGoForward(); // Enter pending-wrap state
+      _buffer.setCursorX(_viewWidth - 1);
+    }
+  }
+
+  @override
+  void backTab(int amount) {
+    for (var i = 0; i < amount; i++) {
+      final previousStop = _tabStops.findPrevious(_buffer.cursorX, 0);
+      _buffer.setCursorX(previousStop ?? 0);
     }
   }
 
@@ -437,6 +508,11 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
   }
 
   @override
+  void singleShift(int charset) {
+    _buffer.charset.useOnce(charset);
+  }
+
+  @override
   void unknownSBC(int char) {
     // no-op
   }
@@ -445,11 +521,15 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
 
   @override
   void saveCursor() {
+    _savedOriginMode = _originMode;
+    _savedAutoWrapMode = _autoWrapMode;
     _buffer.saveCursor();
   }
 
   @override
   void restoreCursor() {
+    _originMode = _savedOriginMode;
+    _autoWrapMode = _savedAutoWrapMode;
     _buffer.restoreCursor();
   }
 
@@ -466,12 +546,22 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
 
   @override
   void setTapStop() {
-    _tabStops.isSetAt(_buffer.cursorX);
+    _tabStops.setAt(_buffer.cursorX);
   }
 
   @override
   void reverseIndex() {
     _buffer.reverseIndex();
+  }
+
+  @override
+  void backIndex() {
+    _buffer.backIndex();
+  }
+
+  @override
+  void forwardIndex() {
+    _buffer.forwardIndex();
   }
 
   @override
@@ -484,6 +574,66 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
     // no-op
   }
 
+  @override
+  void resetTerminal() {
+    _insertMode = false;
+    _lineFeedMode = false;
+    _cursorKeysMode = false;
+    _reverseDisplayMode = false;
+    _originMode = false;
+    _autoWrapMode = true;
+    _ansiMode = true;
+    _mouseMode = MouseMode.none;
+    _mouseReportMode = MouseReportMode.normal;
+    _cursorBlinkMode = false;
+    _cursorVisibleMode = true;
+    _cursorTypeOverride = null;
+    _appKeypadMode = false;
+    _reportFocusMode = false;
+    _altBufferMouseScrollMode = false;
+    _bracketedPasteMode = false;
+    _precedingCodepoint = 0;
+    _savedOriginMode = false;
+    _savedAutoWrapMode = true;
+    _cursorStyle.reset();
+    _tabStops.reset();
+    _mainBuffer.reset();
+    _altBuffer.reset();
+    _buffer = _mainBuffer;
+  }
+
+  @override
+  void softResetTerminal() {
+    _insertMode = false;
+    _lineFeedMode = false;
+    _cursorKeysMode = false;
+    _reverseDisplayMode = false;
+    _originMode = false;
+    _autoWrapMode = true;
+    _ansiMode = true;
+    _mouseMode = MouseMode.none;
+    _mouseReportMode = MouseReportMode.normal;
+    _cursorBlinkMode = false;
+    _cursorVisibleMode = true;
+    _cursorTypeOverride = null;
+    _appKeypadMode = false;
+    _reportFocusMode = false;
+    _altBufferMouseScrollMode = false;
+    _bracketedPasteMode = false;
+    _precedingCodepoint = 0;
+    _savedOriginMode = false;
+    _savedAutoWrapMode = true;
+    _cursorStyle.reset();
+    _mainBuffer.softReset();
+    _altBuffer.softReset();
+    _tabStops.reset();
+  }
+
+  @override
+  void screenAlignmentPattern() {
+    _buffer.screenAlignmentPattern();
+  }
+
   /* CSI */
 
   @override
@@ -493,7 +643,7 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
     }
 
     for (var i = 0; i < count; i++) {
-      _buffer.writeChar(_precedingCodepoint);
+      _buffer.writeChar(_precedingCodepoint, translate: false);
     }
   }
 
@@ -509,7 +659,11 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
 
   @override
   void setCursorY(int y) {
-    _buffer.setCursorY(y);
+    if (_originMode) {
+      _buffer.setCursor(_buffer.cursorX, y);
+    } else {
+      _buffer.setCursorY(y);
+    }
   }
 
   @override
@@ -554,12 +708,26 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
 
   @override
   void sendCursorPosition() {
-    onOutput?.call(_emitter.cursorPosition(_buffer.cursorX, _buffer.cursorY));
+    onOutput?.call(_emitter.cursorPosition(_reportedCursorX, _buffer.cursorY));
   }
 
   @override
+  void sendExtendedCursorPosition() {
+    onOutput?.call(
+      _emitter.extendedCursorPosition(_reportedCursorX, _buffer.cursorY),
+    );
+  }
+
+  int get _reportedCursorX => min(_buffer.cursorX, viewWidth - 1);
+
+  @override
   void setMargins(int top, [int? bottom]) {
-    _buffer.setVerticalMargins(top, bottom ?? viewHeight - 1);
+    final resolvedBottom = bottom ?? viewHeight - 1;
+    if (top >= resolvedBottom) {
+      return;
+    }
+    _buffer.setVerticalMargins(top, resolvedBottom);
+    _buffer.setCursor(0, 0);
   }
 
   @override
@@ -686,11 +854,16 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
   @override
   void setOriginMode(bool enabled) {
     _originMode = enabled;
+    _buffer.setCursor(0, 0);
   }
 
   @override
   void setColumnMode(bool enabled) {
-    // no-op
+    resize(enabled ? 132 : 80, _viewHeight);
+    _buffer.clear();
+    _buffer.resetVerticalMargins();
+    _buffer.setCursor(0, 0);
+    _tabStops.reset();
   }
 
   @override
@@ -719,6 +892,30 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
   }
 
   @override
+  void setCursorShape(int shape) {
+    switch (shape) {
+      case 0:
+        _cursorTypeOverride = null;
+        return;
+      case 1:
+      case 2:
+        _cursorTypeOverride = TerminalCursorType.block;
+        break;
+      case 3:
+      case 4:
+        _cursorTypeOverride = TerminalCursorType.underline;
+        break;
+      case 5:
+      case 6:
+        _cursorTypeOverride = TerminalCursorType.verticalBar;
+        break;
+      default:
+        return;
+    }
+    _cursorBlinkMode = shape.isOdd;
+  }
+
+  @override
   void useAltBuffer() {
     _buffer = _altBuffer;
   }
@@ -730,7 +927,7 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
 
   @override
   void clearAltBuffer() {
-    _altBuffer.clear();
+    _altBuffer.reset();
   }
 
   @override
@@ -811,6 +1008,11 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
   }
 
   @override
+  void setCursorOverline() {
+    _cursorStyle.setOverline();
+  }
+
+  @override
   void unsetCursorBold() {
     _cursorStyle.unsetBold();
   }
@@ -848,6 +1050,11 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
   @override
   void unsetCursorStrikethrough() {
     _cursorStyle.unsetStrikethrough();
+  }
+
+  @override
+  void unsetCursorOverline() {
+    _cursorStyle.unsetOverline();
   }
 
   @override

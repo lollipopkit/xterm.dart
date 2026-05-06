@@ -11,6 +11,8 @@ abstract class EscapeHandler {
 
   void tab();
 
+  void backTab(int amount);
+
   void lineFeed();
 
   void carriageReturn();
@@ -18,6 +20,8 @@ abstract class EscapeHandler {
   void shiftOut();
 
   void shiftIn();
+
+  void singleShift(int charset);
 
   void unknownSBC(int char);
 
@@ -35,9 +39,19 @@ abstract class EscapeHandler {
 
   void reverseIndex();
 
+  void backIndex();
+
+  void forwardIndex();
+
   void designateCharset(int charset, int name);
 
   void unkownEscape(int char);
+
+  void resetTerminal();
+
+  void softResetTerminal();
+
+  void screenAlignmentPattern();
 
   /* CSI */
 
@@ -66,6 +80,8 @@ abstract class EscapeHandler {
   void sendOperatingStatus();
 
   void sendCursorPosition();
+
+  void sendExtendedCursorPosition();
 
   void setMargins(int i, [int? bottom]);
 
@@ -131,6 +147,8 @@ abstract class EscapeHandler {
 
   void setCursorVisibleMode(bool enabled);
 
+  void setCursorShape(int shape);
+
   void useAltBuffer();
 
   void useMainBuffer();
@@ -173,6 +191,8 @@ abstract class EscapeHandler {
 
   void setCursorStrikethrough();
 
+  void setCursorOverline();
+
   void unsetCursorBold();
 
   void unsetCursorFaint();
@@ -188,6 +208,8 @@ abstract class EscapeHandler {
   void unsetCursorInvisible();
 
   void unsetCursorStrikethrough();
+
+  void unsetCursorOverline();
 
   void setForegroundColor16(int color);
 

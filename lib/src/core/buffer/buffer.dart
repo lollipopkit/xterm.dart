@@ -59,7 +59,9 @@ class Buffer {
 
   /// lines of the buffer. the length of [lines] should always be equal or
   /// greater than [viewHeight].
-  late final lines = IndexAwareCircularBuffer<BufferLine>(maxLines);
+  late final lines = IndexAwareCircularBuffer<BufferLine>(
+    max(maxLines + viewHeight, viewHeight),
+  );
 
   /// Total number of lines in the buffer. Always equal or greater than
   /// [viewHeight].
@@ -105,20 +107,51 @@ class Buffer {
   /// Writes a single character to the _terminal. Escape sequences or special
   /// characters are not interpreted and directly added to the buffer.
   ///
+  /// Returns the code point that was written after charset translation, or
+  /// null if the code point could not be represented as a standalone cell.
+  ///
   /// See also: [Terminal.writeChar]
-  void writeChar(int codePoint) {
-    codePoint = charset.translate(codePoint);
+  int? writeChar(int codePoint, {bool translate = true}) {
+    if (translate) {
+      codePoint = charset.translate(codePoint);
+    }
 
-    final cellWidth = unicodeV11.wcwidth(codePoint);
+    var cellWidth = unicodeV11.wcwidth(codePoint);
+    if (cellWidth == 0 && codePoint != 0) {
+      // The current cell storage model stores a single code point per cell and
+      // cannot represent combining character sequences. Do not let zero-width
+      // code points overwrite the next cell or advance the cursor.
+      return null;
+    }
+
     if (_cursorX >= terminal.viewWidth) {
-      index();
-      setCursorX(0);
       if (terminal.autoWrapMode) {
+        index();
+        setCursorX(0);
         currentLine.isWrapped = true;
+      } else {
+        setCursorX(terminal.viewWidth - 1);
+      }
+    }
+
+    if (cellWidth == 2 && _cursorX == terminal.viewWidth - 1) {
+      if (terminal.autoWrapMode) {
+        index();
+        setCursorX(0);
+        currentLine.isWrapped = true;
+      } else {
+        codePoint = 0x20;
+        cellWidth = 1;
       }
     }
 
     final line = currentLine;
+    if (codePoint != 0 && cellWidth > 0) {
+      _prepareOverwrite(line, cellWidth);
+    }
+    if (terminal.insertMode && codePoint != 0 && cellWidth > 0) {
+      line.insertCells(_cursorX, cellWidth, terminal.cursor);
+    }
     line.setCell(_cursorX, codePoint, cellWidth, terminal.cursor);
 
     if (_cursorX < viewWidth) {
@@ -126,7 +159,24 @@ class Buffer {
     }
 
     if (cellWidth == 2) {
-      writeChar(0);
+      writeChar(0, translate: false);
+    }
+
+    return codePoint;
+  }
+
+  void _prepareOverwrite(BufferLine line, int cellWidth) {
+    if (_cursorX > 0 && line.getWidth(_cursorX - 1) == 2) {
+      line.eraseCell(_cursorX - 1, terminal.cursor);
+    }
+
+    if (terminal.insertMode) {
+      return;
+    }
+
+    if (_cursorX < viewWidth - 1 &&
+        (cellWidth == 2 || line.getWidth(_cursorX) == 2)) {
+      line.eraseCell(_cursorX + 1, terminal.cursor);
     }
   }
 
@@ -139,8 +189,8 @@ class Buffer {
     if (_cursorX == 0 && currentLine.isWrapped) {
       currentLine.isWrapped = false;
       moveCursor(viewWidth - 1, -1);
-    } else if (_cursorX == viewWidth) {
-      moveCursor(-2, 0);
+    } else if (_cursorX >= viewWidth) {
+      setCursorX(viewWidth - 1);
     } else {
       moveCursor(-1, 0);
     }
@@ -190,7 +240,7 @@ class Buffer {
   /// cursor.
   void eraseLineToCursor() {
     currentLine.isWrapped = false;
-    currentLine.eraseRange(0, _cursorX, terminal.cursor);
+    currentLine.eraseRange(0, _cursorX + 1, terminal.cursor);
   }
 
   /// Erases the line at the current cursor position.
@@ -201,6 +251,10 @@ class Buffer {
 
   /// Erases [count] cells starting at the cursor position.
   void eraseChars(int count) {
+    if (count <= 0) {
+      return;
+    }
+
     final start = _cursorX;
     currentLine.eraseRange(start, start + count, terminal.cursor);
   }
@@ -233,6 +287,8 @@ class Buffer {
   /// changing the column position. If the active position is at the bottom
   /// margin, a scroll up is performed.
   void index() {
+    _clearPendingWrap();
+
     if (isInVerticalMargin) {
       if (_cursorY == _marginBottom) {
         if (marginTop == 0 && !isAltBuffer) {
@@ -267,8 +323,26 @@ class Buffer {
     }
   }
 
+  void backIndex() {
+    if (_cursorX == 0) {
+      currentLine.insertCells(0, 1, terminal.cursor);
+    } else {
+      moveCursorX(-1);
+    }
+  }
+
+  void forwardIndex() {
+    if (_cursorX >= viewWidth - 1) {
+      currentLine.removeCells(0, 1, terminal.cursor);
+    } else {
+      moveCursorX(1);
+    }
+  }
+
   /// https://terminalguide.namepad.de/seq/a_esc_cm/
   void reverseIndex() {
+    _clearPendingWrap();
+
     if (isInVerticalMargin) {
       if (_cursorY == _marginTop) {
         scrollDown(1);
@@ -284,11 +358,18 @@ class Buffer {
     _cursorX = min(_cursorX + 1, viewWidth);
   }
 
+  void _clearPendingWrap() {
+    if (_cursorX >= viewWidth) {
+      setCursorX(viewWidth - 1);
+    }
+  }
+
   void setCursorX(int cursorX) {
     _cursorX = cursorX.clamp(0, viewWidth - 1);
   }
 
   void setCursorY(int cursorY) {
+    _clearPendingWrap();
     _cursorY = cursorY.clamp(0, viewHeight - 1);
   }
 
@@ -297,7 +378,14 @@ class Buffer {
   }
 
   void moveCursorY(int offset) {
-    setCursorY(_cursorY + offset);
+    _clearPendingWrap();
+
+    final cursorY = _cursorY + offset;
+    if (terminal.originMode) {
+      _cursorY = cursorY.clamp(_marginTop, _marginBottom);
+    } else {
+      setCursorY(cursorY);
+    }
   }
 
   void setCursor(int cursorX, int cursorY) {
@@ -313,9 +401,8 @@ class Buffer {
   }
 
   void moveCursor(int offsetX, int offsetY) {
-    final cursorX = _cursorX + offsetX;
-    final cursorY = _cursorY + offsetY;
-    setCursor(cursorX, cursorY);
+    setCursorX(_cursorX + offsetX);
+    moveCursorY(offsetY);
   }
 
   /// Save cursor position, charmap and text attributes.
@@ -330,8 +417,8 @@ class Buffer {
 
   /// Restore cursor position, charmap and text attributes.
   void restoreCursor() {
-    _cursorX = _savedCursorX;
-    _cursorY = _savedCursorY;
+    _cursorX = _savedCursorX.clamp(0, viewWidth - 1);
+    _cursorY = _savedCursorY.clamp(0, viewHeight - 1);
     terminal.cursor.foreground = _savedCursorStyle.foreground;
     terminal.cursor.background = _savedCursorStyle.background;
     terminal.cursor.attrs = _savedCursorStyle.attrs;
@@ -357,6 +444,10 @@ class Buffer {
   }
 
   void deleteChars(int count) {
+    if (count <= 0) {
+      return;
+    }
+
     final start = _cursorX.clamp(0, viewWidth);
     count = min(count, viewWidth - start);
     currentLine.removeCells(start, count, terminal.cursor);
@@ -379,12 +470,44 @@ class Buffer {
     }
   }
 
+  void screenAlignmentPattern() {
+    const codePoint = 0x45; // E
+    for (var y = 0; y < viewHeight; y++) {
+      final line = lines[scrollBack + y];
+      line.isWrapped = false;
+      for (var x = 0; x < viewWidth; x++) {
+        line.setCell(x, codePoint, 1, terminal.cursor);
+      }
+    }
+  }
+
+  /// Soft-resets state associated with this buffer without clearing content.
+  void softReset() {
+    resetVerticalMargins();
+    _cursorX = 0;
+    _cursorY = 0;
+    _savedCursorX = 0;
+    _savedCursorY = 0;
+    _savedCursorStyle.reset();
+    charset.reset();
+  }
+
+  /// Resets this buffer to its initial state.
+  void reset() {
+    clear();
+    softReset();
+  }
+
   void insertBlankChars(int count) {
+    if (count <= 0) {
+      return;
+    }
+
     currentLine.insertCells(_cursorX, count, terminal.cursor);
   }
 
   void insertLines(int count) {
-    if (!isInVerticalMargin) {
+    if (count <= 0 || !isInVerticalMargin) {
       return;
     }
 
@@ -414,7 +537,7 @@ class Buffer {
   /// the removed lines are shifted up. This only affects the scrollable region.
   /// Lines outside the scrollable region are not affected.
   void deleteLines(int count) {
-    if (!isInVerticalMargin) {
+    if (count <= 0 || !isInVerticalMargin) {
       return;
     }
 
@@ -435,6 +558,11 @@ class Buffer {
   }
 
   void resize(int oldWidth, int oldHeight, int newWidth, int newHeight) {
+    final requiredMaxLength = max(maxLines + newHeight, newHeight);
+    if (lines.maxLength < requiredMaxLength) {
+      lines.maxLength = requiredMaxLength;
+    }
+
     // 1. Adjust the height.
     if (newHeight > oldHeight) {
       // Grow larger

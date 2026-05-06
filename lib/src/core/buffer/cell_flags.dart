@@ -6,4 +6,6 @@ abstract class CellFlags {
   static const blink = 1 << 4;
   static const inverse = 1 << 5;
   static const invisible = 1 << 6;
+  static const strikethrough = 1 << 7;
+  static const overline = 1 << 8;
 }

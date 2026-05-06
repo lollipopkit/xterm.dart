@@ -92,15 +92,16 @@ class TerminalPainter {
         canvas.drawRect(offset & _cellSize, paint);
         return;
       case TerminalCursorType.underline:
+        final y = offset.dy + _cellSize.height - 1;
         return canvas.drawLine(
-          Offset(offset.dx, _cellSize.height - 1),
-          Offset(offset.dx + _cellSize.width, _cellSize.height - 1),
+          Offset(offset.dx, y),
+          Offset(offset.dx + _cellSize.width, y),
           paint,
         );
       case TerminalCursorType.verticalBar:
         return canvas.drawLine(
-          Offset(offset.dx, 0),
-          Offset(offset.dx, _cellSize.height),
+          offset,
+          Offset(offset.dx, offset.dy + _cellSize.height),
           paint,
         );
     }
@@ -122,7 +123,12 @@ class TerminalPainter {
 
   /// Paints [line] to [canvas] at [offset]. The x offset of [offset] is usually
   /// 0, and the y offset is the top of the line.
-  void paintLine(Canvas canvas, Offset offset, BufferLine line) {
+  void paintLine(
+    Canvas canvas,
+    Offset offset,
+    BufferLine line, {
+    bool reverseDisplay = false,
+  }) {
     final cellData = CellData.empty();
     final cellWidth = _cellSize.width;
 
@@ -132,7 +138,7 @@ class TerminalPainter {
       final charWidth = cellData.content >> CellContent.widthShift;
       final cellOffset = offset.translate(i * cellWidth, 0);
 
-      paintCell(canvas, cellOffset, cellData);
+      paintCell(canvas, cellOffset, cellData, reverseDisplay: reverseDisplay);
 
       if (charWidth == 2) {
         i++;
@@ -141,25 +147,53 @@ class TerminalPainter {
   }
 
   @pragma('vm:prefer-inline')
-  void paintCell(Canvas canvas, Offset offset, CellData cellData) {
-    paintCellBackground(canvas, offset, cellData);
-    paintCellForeground(canvas, offset, cellData);
+  void paintCell(
+    Canvas canvas,
+    Offset offset,
+    CellData cellData, {
+    bool reverseDisplay = false,
+  }) {
+    paintCellBackground(
+      canvas,
+      offset,
+      cellData,
+      reverseDisplay: reverseDisplay,
+    );
+    paintCellForeground(
+      canvas,
+      offset,
+      cellData,
+      reverseDisplay: reverseDisplay,
+    );
   }
 
   /// Paints the character in the cell represented by [cellData] to [canvas] at
   /// [offset].
   @pragma('vm:prefer-inline')
-  void paintCellForeground(Canvas canvas, Offset offset, CellData cellData) {
+  void paintCellForeground(
+    Canvas canvas,
+    Offset offset,
+    CellData cellData, {
+    bool reverseDisplay = false,
+  }) {
     final charCode = cellData.content & CellContent.codepointMask;
     if (charCode == 0) return;
 
-    final cacheKey = cellData.getHash() ^ _textScaler.hashCode;
+    final cacheKey =
+        cellData.getHash() ^
+        _textScaler.hashCode ^
+        (reverseDisplay ? 0x10000000 : 0);
     var paragraph = _paragraphCache.getLayoutFromCache(cacheKey);
+
+    if (cellData.flags & CellFlags.invisible != 0) {
+      return;
+    }
 
     if (paragraph == null) {
       final cellFlags = cellData.flags;
+      final inverse = (cellFlags & CellFlags.inverse != 0) ^ reverseDisplay;
 
-      var color = cellFlags & CellFlags.inverse == 0
+      var color = !inverse
           ? resolveForegroundColor(cellData.foreground)
           : resolveBackgroundColor(cellData.background);
 
@@ -172,6 +206,8 @@ class TerminalPainter {
         bold: cellFlags & CellFlags.bold != 0,
         italic: cellFlags & CellFlags.italic != 0,
         underline: cellFlags & CellFlags.underline != 0,
+        strikethrough: cellFlags & CellFlags.strikethrough != 0,
+        overline: cellFlags & CellFlags.overline != 0,
       );
 
       // Flutter does not draw an underline below a space which is not between
@@ -199,11 +235,17 @@ class TerminalPainter {
   /// Paints the background of a cell represented by [cellData] to [canvas] at
   /// [offset].
   @pragma('vm:prefer-inline')
-  void paintCellBackground(Canvas canvas, Offset offset, CellData cellData) {
+  void paintCellBackground(
+    Canvas canvas,
+    Offset offset,
+    CellData cellData, {
+    bool reverseDisplay = false,
+  }) {
     late Color color;
     final colorType = cellData.background & CellColor.typeMask;
+    final inverse = (cellData.flags & CellFlags.inverse != 0) ^ reverseDisplay;
 
-    if (cellData.flags & CellFlags.inverse != 0) {
+    if (inverse) {
       color = resolveForegroundColor(cellData.foreground);
     } else if (colorType == CellColor.normal) {
       return;

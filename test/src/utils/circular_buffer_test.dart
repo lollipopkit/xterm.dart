@@ -46,6 +46,27 @@ void main() {
       expect(cl.maxLength, 3000);
     });
 
+    test("shrinking max value detaches trimmed items and keeps indexes", () {
+      final cl = IndexAwareCircularBuffer<IndexedValue<int>>(5);
+      final items = List<IndexedValue<int>>.generate(
+        5,
+        (index) => IndexedValue(index),
+      );
+      cl.pushAll(items);
+
+      cl.maxLength = 3;
+
+      expect(cl.maxLength, 3);
+      expect(cl.length, 3);
+      expect(items[0].attached, isFalse);
+      expect(items[1].attached, isFalse);
+      expect(cl[0], 2.indexed);
+      expect(cl[1], 3.indexed);
+      expect(cl[2], 4.indexed);
+      expect(items[2].index, 0);
+      expect(items[4].index, 2);
+    });
+
     test("circle works", () {
       final cl = IndexAwareCircularBuffer<IndexedValue<int>>(10);
       expect(cl.maxLength, 10);
@@ -211,6 +232,27 @@ void main() {
       expect(cl[0], 14.indexed);
     });
 
+    test("remove at length is a no-op", () {
+      final cl = IndexAwareCircularBuffer<IndexedValue<int>>(10);
+      cl.pushAll(List<int>.generate(3, (index) => index).map(IndexedValue.new));
+
+      cl.remove(3);
+
+      expect(cl.length, 3);
+      expect(cl[0], 0.indexed);
+      expect(cl[2], 2.indexed);
+    });
+
+    test("remove past length throws without corrupting the buffer", () {
+      final cl = IndexAwareCircularBuffer<IndexedValue<int>>(10);
+      cl.pushAll(List<int>.generate(3, (index) => index).map(IndexedValue.new));
+
+      expect(() => cl.remove(4), throwsRangeError);
+      expect(cl.length, 3);
+      expect(cl[0], 0.indexed);
+      expect(cl[2], 2.indexed);
+    });
+
     test("remove too much works", () {
       final cl = IndexAwareCircularBuffer<IndexedValue<int>>(10);
       cl.pushAll(
@@ -227,9 +269,7 @@ void main() {
 
     test("insert works", () {
       final cl = IndexAwareCircularBuffer<IndexedValue<int>>(10);
-      cl.pushAll(
-        List<int>.generate(5, (index) => index).map(IndexedValue.new),
-      );
+      cl.pushAll(List<int>.generate(5, (index) => index).map(IndexedValue.new));
       expect(cl.length, 5);
       expect(cl[0], 0.indexed);
       cl.insert(0, IndexedValue(100));
@@ -273,6 +313,16 @@ void main() {
       expect(cl[1], 1.indexed);
     });
 
+    test("insertAll validates index even for empty insertions", () {
+      final cl = IndexAwareCircularBuffer<IndexedValue<int>>(3);
+      cl.pushAll([1.indexed, 2.indexed]);
+
+      expect(() => cl.insertAll(-1, []), throwsRangeError);
+      expect(() => cl.insertAll(3, []), throwsRangeError);
+      expect(() => cl.insertAll(2, []), returnsNormally);
+      expect(cl.toList(), [1.indexed, 2.indexed]);
+    });
+
     test("insert all works", () {
       final cl = IndexAwareCircularBuffer<IndexedValue<int>>(10);
       cl.pushAll(
@@ -285,9 +335,10 @@ void main() {
 
       cl.insertAll(
         2,
-        List<int>.generate(2, (index) => 20 + index)
-            .map(IndexedValue.new)
-            .toList(),
+        List<int>.generate(
+          2,
+          (index) => 20 + index,
+        ).map(IndexedValue.new).toList(),
       );
 
       expect(cl.length, 10);
@@ -299,9 +350,11 @@ void main() {
 
     test("trim start works", () {
       final cl = IndexAwareCircularBuffer<IndexedValue<int>>(10);
-      cl.pushAll(
-        List<int>.generate(10, (index) => index).map(IndexedValue.new),
-      );
+      final items = List<int>.generate(
+        10,
+        (index) => index,
+      ).map(IndexedValue.new).toList();
+      cl.pushAll(items);
       expect(cl.length, 10);
       expect(cl[0], 0.indexed);
       expect(cl[1], 1.indexed);
@@ -313,6 +366,10 @@ void main() {
       expect(cl[0], 5.indexed);
       expect(cl[1], 6.indexed);
       expect(cl[4], 9.indexed);
+      expect(items[0].attached, isFalse);
+      expect(items[4].attached, isFalse);
+      expect(items[5].index, 0);
+      expect(items[9].index, 4);
     });
 
     test("trim start with more than length works", () {
@@ -328,6 +385,26 @@ void main() {
       cl.trimStart(15);
 
       expect(cl.length, 0);
+    });
+
+    test('replaceWith detaches overflow replacement items', () {
+      final cl = IndexAwareCircularBuffer<IndexedValue<int>>(3);
+      final items = List<IndexedValue<int>>.generate(
+        5,
+        (index) => IndexedValue(index),
+      );
+      cl.pushAll(items.take(3));
+
+      cl.replaceWith(items);
+
+      expect(cl.length, 3);
+      expect(items[0].attached, isFalse);
+      expect(items[1].attached, isFalse);
+      expect(cl[0], 2.indexed);
+      expect(cl[1], 3.indexed);
+      expect(cl[2], 4.indexed);
+      expect(items[2].index, 0);
+      expect(items[4].index, 2);
     });
 
     test('can track index of items', () {
@@ -360,8 +437,6 @@ void main() {
       expect(item3.index, 2);
 
       cl.remove(0, 2);
-
-      print(cl.debugDump());
 
       expect(item11.attached, false);
       expect(item2.attached, false);

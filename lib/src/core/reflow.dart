@@ -1,4 +1,5 @@
 import 'package:xterm/src/core/buffer/line.dart';
+import 'package:xterm/src/core/cell.dart';
 import 'package:xterm/src/utils/circular_buffer.dart';
 
 class _LineBuilder {
@@ -23,6 +24,19 @@ class _LineBuilder {
   void add(BufferLine src, int start, int length) {
     _result.copyFrom(src, start, _length, length);
     _length += length;
+  }
+
+  /// Adds a wide character from [src] as a single-column fallback. This is only
+  /// used for one-column terminals where a two-column cell cannot fit without
+  /// causing reflow to make no progress.
+  void addWideAsNarrow(BufferLine src, int index) {
+    _result.resize(_length + 1);
+    _result.setCellData(_length, src.createCellData(index));
+    _result.setContent(
+      _length,
+      src.getCodePoint(index) | (1 << CellContent.widthShift),
+    );
+    _length++;
   }
 
   /// Reuses the given [line] as the initial buffer for this builder.
@@ -124,8 +138,22 @@ class _LineReflow {
         cellsToCopy--;
       }
 
+      if (lineFilled && cellsToCopy == 0) {
+        for (var anchor in line.anchors.toList()) {
+          if (anchor.x >= from && anchor.x < from + 2) {
+            _builder.addAnchor(anchor, 0);
+          }
+        }
+
+        _builder.addWideAsNarrow(line, from);
+        from += 2;
+        cellsLeft -= 2;
+        _lines.add(_builder.take(wrapped: _lines.isNotEmpty));
+        continue;
+      }
+
       for (var anchor in line.anchors.toList()) {
-        if (anchor.x >= from && anchor.x <= from + cellsToCopy) {
+        if (anchor.x >= from && anchor.x < from + cellsToCopy) {
           _builder.addAnchor(anchor, anchor.x - from);
         }
       }

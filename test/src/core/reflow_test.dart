@@ -78,6 +78,38 @@ void main() {
     expect(terminal.buffer.lines[1].toString(), '是地上霜');
   });
 
+  test('reflow() can resize wide characters to one column', () {
+    final terminal = Terminal();
+    terminal.write('界A');
+    final wideAnchor = terminal.buffer.lines[0].createAnchor(0);
+    final trailingAnchor = terminal.buffer.lines[0].createAnchor(1);
+
+    terminal.resize(1, 10);
+
+    expect(terminal.buffer.lines[0].toString(), '');
+    expect(terminal.buffer.lines[1].toString(), '界');
+    expect(terminal.buffer.lines[2].toString(), 'A');
+    expect(wideAnchor.x, 0);
+    expect(wideAnchor.y, 1);
+    expect(trailingAnchor.x, 0);
+    expect(trailingAnchor.y, 1);
+  });
+
+  test('anchors at split boundaries move to the next visual line', () {
+    final terminal = Terminal();
+    terminal.write('abcdefghi');
+    final anchor = terminal.buffer.lines[0].createAnchor(8);
+
+    terminal.resize(4, 10);
+
+    expect(terminal.buffer.lines[0].toString(), 'abcd');
+    expect(terminal.buffer.lines[1].toString(), 'efgh');
+    expect(terminal.buffer.lines[2].toString(), 'i');
+    expect(anchor.x, 0);
+    expect(anchor.y, 2);
+    expect(anchor.line, same(terminal.buffer.lines[2]));
+  });
+
   test('lines has correct length after reflow', () {
     final terminal = Terminal();
 

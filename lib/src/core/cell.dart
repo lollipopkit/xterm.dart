@@ -9,12 +9,7 @@ class CellData {
   });
 
   factory CellData.empty() {
-    return CellData(
-      foreground: 0,
-      background: 0,
-      flags: 0,
-      content: 0,
-    );
+    return CellData(foreground: 0, background: 0, flags: 0, content: 0);
   }
 
   int foreground;
@@ -44,6 +39,7 @@ abstract class CellAttr {
   static const inverse = 1 << 5;
   static const invisible = 1 << 6;
   static const strikethrough = 1 << 7;
+  static const overline = 1 << 8;
 }
 
 abstract class CellColor {

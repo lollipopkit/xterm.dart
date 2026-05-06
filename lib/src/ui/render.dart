@@ -134,6 +134,8 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
   }
 
   bool _cursorBlinkEnabled;
+  bool get cursorBlinkEnabled => _cursorBlinkEnabled;
+
   set cursorBlinkEnabled(bool value) {
     if (value == _cursorBlinkEnabled) return;
     _cursorBlinkEnabled = value;
@@ -442,6 +444,10 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     return _terminal.cursorVisibleMode || _alwaysShowCursor || _isComposingText;
   }
 
+  TerminalCursorType get _effectiveCursorType {
+    return _terminal.cursorTypeOverride ?? _cursorType;
+  }
+
   double get _viewportHeight {
     return size.height - _padding.vertical;
   }
@@ -492,6 +498,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
         canvas,
         offset.translate(0, (i * charHeight + _lineOffset).truncateToDouble()),
         lines[i],
+        reverseDisplay: _terminal.reverseDisplayMode,
       );
     }
 
@@ -512,7 +519,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
         _painter.paintCursor(
           canvas,
           offset + cursorOffset,
-          cursorType: _cursorType,
+          cursorType: _effectiveCursorType,
           hasFocus: _focusNode.hasFocus,
         );
       }
