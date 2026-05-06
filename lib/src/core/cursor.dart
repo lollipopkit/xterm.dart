@@ -102,6 +102,8 @@ class CursorStyle {
 
   bool get isOverline => (attrs & CellAttr.overline) != 0;
 
+  bool get isStrikethrough => (attrs & CellAttr.strikethrough) != 0;
+
   void setForegroundColor16(int color) {
     foreground = color | CellColor.named;
   }
