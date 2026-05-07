@@ -1,3 +1,5 @@
+import 'dart:math';
+
 const _kInitialColumns = 1024;
 const _kTabInterval = 8;
 
@@ -33,6 +35,8 @@ class TabStops {
 
   /// Finds the next tab stop index, which satisfies [start] <= index < [end].
   int? find(int start, int end) {
+    start = max(0, start);
+    end = max(0, end);
     if (start >= end) {
       return null;
     }
@@ -47,6 +51,8 @@ class TabStops {
 
   /// Finds the previous tab stop index, which satisfies [start] > index >= [end].
   int? findPrevious(int start, int end) {
+    start = max(0, start);
+    end = max(0, end);
     if (start <= end) {
       return null;
     }

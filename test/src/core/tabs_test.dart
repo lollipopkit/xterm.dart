@@ -17,14 +17,21 @@ void main() {
 
     test('grows beyond the initial column allocation', () {
       final tabStops = TabStops();
+      const largeStart = 100000;
+      const largeEnd = largeStart + 9;
+      const largeIndex = 200000;
+      const anotherLargeIndex = largeIndex + 2;
 
-      expect(tabStops.find(1024, 1033), 1024);
-      tabStops.clearAt(2048);
-      expect(tabStops.isSetAt(2048), false);
-      tabStops.setAt(2050);
-      expect(tabStops.find(2048, 2051), 2050);
+      expect(tabStops.find(largeStart, largeEnd), largeStart);
+      tabStops.clearAt(largeIndex);
+      expect(tabStops.isSetAt(largeIndex), false);
+      tabStops.setAt(anotherLargeIndex);
+      expect(
+        tabStops.find(largeIndex, anotherLargeIndex + 1),
+        anotherLargeIndex,
+      );
       tabStops.reset();
-      expect(tabStops.isSetAt(2048), true);
+      expect(tabStops.isSetAt(largeIndex), true);
     });
 
     test('does not create default stops in new columns after clearAll', () {
@@ -44,6 +51,12 @@ void main() {
       expect(tabStops.findPrevious(16, 0), 8);
       expect(tabStops.findPrevious(8, 8), isNull);
     });
+
+    test('clamps negative bounds', () {
+      final tabStops = TabStops();
+      expect(tabStops.findPrevious(8, -1), 0);
+      expect(tabStops.findPrevious(-1, -2), isNull);
+    });
   });
 
   group('TabStops.find()', () {
@@ -56,6 +69,12 @@ void main() {
       final tabStops = TabStops();
       expect(tabStops.find(0, 8), 0);
       expect(tabStops.find(1, 9), 8);
+    });
+
+    test('clamps negative bounds', () {
+      final tabStops = TabStops();
+      expect(tabStops.find(-1, 1), 0);
+      expect(tabStops.find(-2, -1), isNull);
     });
   });
 }

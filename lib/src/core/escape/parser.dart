@@ -570,10 +570,11 @@ class EscapeParser {
   ///
   /// https://terminalguide.namepad.de/seq/csi_sc/
   void _csiHandleSendDeviceAttributes() {
-    for (final request in _csi.params) {
-      if (request != 0) {
-        return;
-      }
+    final params = _csi.params;
+    final isDefaultRequest =
+        params.isEmpty || params.length == 1 && params[0] == 0;
+    if (!isDefaultRequest) {
+      return;
     }
 
     switch (_csi.prefix) {
@@ -653,267 +654,227 @@ class EscapeParser {
       return handler.resetCursorStyle();
     }
 
-    // This is a workaround for a bug in the analyzer.
-    // ignore: dead_code
-    for (var i = 0; i < _csi.params.length; i++) {
+    for (var i = 0; i < params.length; i++) {
       final param = params[i];
-      switch (param) {
-        case 0:
-          handler.resetCursorStyle();
-          continue;
-        case 1:
-          handler.setCursorBold();
-          continue;
-        case 2:
-          handler.setCursorFaint();
-          continue;
-        case 3:
-          handler.setCursorItalic();
-          continue;
-        case 4:
-          if (_isColonSubParam(i, 0)) {
-            handler.unsetCursorUnderline();
-          } else {
-            handler.setCursorUnderline();
-          }
-          i = _skipColonSubParams(i);
-          continue;
-        case 5:
-        case 6:
-          handler.setCursorBlink();
-          continue;
-        case 7:
-          handler.setCursorInverse();
-          continue;
-        case 8:
-          handler.setCursorInvisible();
-          continue;
-        case 9:
-          handler.setCursorStrikethrough();
-          continue;
+      final nextIndex =
+          _handleBasicStyles(param, i) ??
+          _handleForegroundColor(params, i) ??
+          _handleBackgroundColor(params, i) ??
+          _skipExtendedColorIfNeeded(param, i);
 
-        case 21:
-          handler.setCursorUnderline();
-          continue;
-        case 22:
-          handler.unsetCursorBold();
-          handler.unsetCursorFaint();
-          continue;
-        case 23:
-          handler.unsetCursorItalic();
-          continue;
-        case 24:
-          handler.unsetCursorUnderline();
-          continue;
-        case 25:
-          handler.unsetCursorBlink();
-          continue;
-        case 27:
-          handler.unsetCursorInverse();
-          continue;
-        case 28:
-          handler.unsetCursorInvisible();
-          continue;
-        case 29:
-          handler.unsetCursorStrikethrough();
-          continue;
-
-        case 30:
-          handler.setForegroundColor16(NamedColor.black);
-          continue;
-        case 31:
-          handler.setForegroundColor16(NamedColor.red);
-          continue;
-        case 32:
-          handler.setForegroundColor16(NamedColor.green);
-          continue;
-        case 33:
-          handler.setForegroundColor16(NamedColor.yellow);
-          continue;
-        case 34:
-          handler.setForegroundColor16(NamedColor.blue);
-          continue;
-        case 35:
-          handler.setForegroundColor16(NamedColor.magenta);
-          continue;
-        case 36:
-          handler.setForegroundColor16(NamedColor.cyan);
-          continue;
-        case 37:
-          handler.setForegroundColor16(NamedColor.white);
-          continue;
-        case 38:
-          if (i + 1 >= params.length) continue;
-          final mode = params[i + 1];
-          switch (mode) {
-            case 2:
-              if (_hasColonColorSpace(i)) {
-                final r = params[i + 3];
-                final g = params[i + 4];
-                final b = params[i + 5];
-                handler.setForegroundColorRgb(r, g, b);
-                i += 5;
-                break;
-              }
-              if (i + 4 >= params.length) {
-                i = params.length;
-                break;
-              }
-              final r = params[i + 2];
-              final g = params[i + 3];
-              final b = params[i + 4];
-              handler.setForegroundColorRgb(r, g, b);
-              i += 4;
-              break;
-            case 5:
-              if (i + 2 >= params.length) {
-                i += 1;
-                break;
-              }
-              final index = params[i + 2];
-              handler.setForegroundColor256(index);
-              i += 2;
-              break;
-            default:
-              i += 1;
-              break;
-          }
-          continue;
-        case 39:
-          handler.resetForeground();
-          continue;
-
-        case 40:
-          handler.setBackgroundColor16(NamedColor.black);
-          continue;
-        case 41:
-          handler.setBackgroundColor16(NamedColor.red);
-          continue;
-        case 42:
-          handler.setBackgroundColor16(NamedColor.green);
-          continue;
-        case 43:
-          handler.setBackgroundColor16(NamedColor.yellow);
-          continue;
-        case 44:
-          handler.setBackgroundColor16(NamedColor.blue);
-          continue;
-        case 45:
-          handler.setBackgroundColor16(NamedColor.magenta);
-          continue;
-        case 46:
-          handler.setBackgroundColor16(NamedColor.cyan);
-          continue;
-        case 47:
-          handler.setBackgroundColor16(NamedColor.white);
-          continue;
-        case 48:
-          if (i + 1 >= params.length) continue;
-          final mode = params[i + 1];
-          switch (mode) {
-            case 2:
-              if (_hasColonColorSpace(i)) {
-                final r = params[i + 3];
-                final g = params[i + 4];
-                final b = params[i + 5];
-                handler.setBackgroundColorRgb(r, g, b);
-                i += 5;
-                break;
-              }
-              if (i + 4 >= params.length) {
-                i = params.length;
-                break;
-              }
-              final r = params[i + 2];
-              final g = params[i + 3];
-              final b = params[i + 4];
-              handler.setBackgroundColorRgb(r, g, b);
-              i += 4;
-              break;
-            case 5:
-              if (i + 2 >= params.length) {
-                i += 1;
-                break;
-              }
-              final index = params[i + 2];
-              handler.setBackgroundColor256(index);
-              i += 2;
-              break;
-            default:
-              i += 1;
-              break;
-          }
-          continue;
-        case 49:
-          handler.resetBackground();
-          continue;
-
-        case 53:
-          handler.setCursorOverline();
-          continue;
-        case 58:
-          i = _skipUnsupportedExtendedColor(i);
-          continue;
-        case 59:
-          continue;
-        case 55:
-          handler.unsetCursorOverline();
-          continue;
-
-        case 90:
-          handler.setForegroundColor16(NamedColor.brightBlack);
-          continue;
-        case 91:
-          handler.setForegroundColor16(NamedColor.brightRed);
-          continue;
-        case 92:
-          handler.setForegroundColor16(NamedColor.brightGreen);
-          continue;
-        case 93:
-          handler.setForegroundColor16(NamedColor.brightYellow);
-          continue;
-        case 94:
-          handler.setForegroundColor16(NamedColor.brightBlue);
-          continue;
-        case 95:
-          handler.setForegroundColor16(NamedColor.brightMagenta);
-          continue;
-        case 96:
-          handler.setForegroundColor16(NamedColor.brightCyan);
-          continue;
-        case 97:
-          handler.setForegroundColor16(NamedColor.brightWhite);
-          continue;
-
-        case 100:
-          handler.setBackgroundColor16(NamedColor.brightBlack);
-          continue;
-        case 101:
-          handler.setBackgroundColor16(NamedColor.brightRed);
-          continue;
-        case 102:
-          handler.setBackgroundColor16(NamedColor.brightGreen);
-          continue;
-        case 103:
-          handler.setBackgroundColor16(NamedColor.brightYellow);
-          continue;
-        case 104:
-          handler.setBackgroundColor16(NamedColor.brightBlue);
-          continue;
-        case 105:
-          handler.setBackgroundColor16(NamedColor.brightMagenta);
-          continue;
-        case 106:
-          handler.setBackgroundColor16(NamedColor.brightCyan);
-          continue;
-        case 107:
-          handler.setBackgroundColor16(NamedColor.brightWhite);
-          continue;
-
-        default:
-          handler.unsupportedStyle(param);
-          continue;
+      if (nextIndex != null) {
+        i = nextIndex;
+        continue;
       }
+
+      handler.unsupportedStyle(param);
+    }
+  }
+
+  int? _handleBasicStyles(int param, int index) {
+    switch (param) {
+      case 0:
+        handler.resetCursorStyle();
+      case 1:
+        handler.setCursorBold();
+      case 2:
+        handler.setCursorFaint();
+      case 3:
+        handler.setCursorItalic();
+      case 4:
+        if (_isColonSubParam(index, 0)) {
+          handler.unsetCursorUnderline();
+        } else {
+          handler.setCursorUnderline();
+        }
+        return _skipColonSubParams(index);
+      case 5:
+      case 6:
+        handler.setCursorBlink();
+      case 7:
+        handler.setCursorInverse();
+      case 8:
+        handler.setCursorInvisible();
+      case 9:
+        handler.setCursorStrikethrough();
+      case 21:
+        handler.setCursorUnderline();
+      case 22:
+        handler.unsetCursorBold();
+        handler.unsetCursorFaint();
+      case 23:
+        handler.unsetCursorItalic();
+      case 24:
+        handler.unsetCursorUnderline();
+      case 25:
+        handler.unsetCursorBlink();
+      case 27:
+        handler.unsetCursorInverse();
+      case 28:
+        handler.unsetCursorInvisible();
+      case 29:
+        handler.unsetCursorStrikethrough();
+      case 53:
+        handler.setCursorOverline();
+      case 55:
+        handler.unsetCursorOverline();
+      default:
+        return null;
+    }
+    return index;
+  }
+
+  int? _handleForegroundColor(List<int> params, int index) {
+    switch (params[index]) {
+      case 30:
+        handler.setForegroundColor16(NamedColor.black);
+      case 31:
+        handler.setForegroundColor16(NamedColor.red);
+      case 32:
+        handler.setForegroundColor16(NamedColor.green);
+      case 33:
+        handler.setForegroundColor16(NamedColor.yellow);
+      case 34:
+        handler.setForegroundColor16(NamedColor.blue);
+      case 35:
+        handler.setForegroundColor16(NamedColor.magenta);
+      case 36:
+        handler.setForegroundColor16(NamedColor.cyan);
+      case 37:
+        handler.setForegroundColor16(NamedColor.white);
+      case 38:
+        return _handleForegroundExtendedColor(params, index);
+      case 39:
+        handler.resetForeground();
+      case 90:
+        handler.setForegroundColor16(NamedColor.brightBlack);
+      case 91:
+        handler.setForegroundColor16(NamedColor.brightRed);
+      case 92:
+        handler.setForegroundColor16(NamedColor.brightGreen);
+      case 93:
+        handler.setForegroundColor16(NamedColor.brightYellow);
+      case 94:
+        handler.setForegroundColor16(NamedColor.brightBlue);
+      case 95:
+        handler.setForegroundColor16(NamedColor.brightMagenta);
+      case 96:
+        handler.setForegroundColor16(NamedColor.brightCyan);
+      case 97:
+        handler.setForegroundColor16(NamedColor.brightWhite);
+      default:
+        return null;
+    }
+    return index;
+  }
+
+  int _handleForegroundExtendedColor(List<int> params, int index) {
+    if (index + 1 >= params.length) return index;
+
+    switch (params[index + 1]) {
+      case 2:
+        final nextIndex = _readRgbColor(
+          params,
+          index,
+          handler.setForegroundColorRgb,
+        );
+        return nextIndex;
+      case 5:
+        if (index + 2 >= params.length) return index + 1;
+        handler.setForegroundColor256(params[index + 2]);
+        return index + 2;
+      default:
+        return index + 1;
+    }
+  }
+
+  int? _handleBackgroundColor(List<int> params, int index) {
+    switch (params[index]) {
+      case 40:
+        handler.setBackgroundColor16(NamedColor.black);
+      case 41:
+        handler.setBackgroundColor16(NamedColor.red);
+      case 42:
+        handler.setBackgroundColor16(NamedColor.green);
+      case 43:
+        handler.setBackgroundColor16(NamedColor.yellow);
+      case 44:
+        handler.setBackgroundColor16(NamedColor.blue);
+      case 45:
+        handler.setBackgroundColor16(NamedColor.magenta);
+      case 46:
+        handler.setBackgroundColor16(NamedColor.cyan);
+      case 47:
+        handler.setBackgroundColor16(NamedColor.white);
+      case 48:
+        return _handleBackgroundExtendedColor(params, index);
+      case 49:
+        handler.resetBackground();
+      case 100:
+        handler.setBackgroundColor16(NamedColor.brightBlack);
+      case 101:
+        handler.setBackgroundColor16(NamedColor.brightRed);
+      case 102:
+        handler.setBackgroundColor16(NamedColor.brightGreen);
+      case 103:
+        handler.setBackgroundColor16(NamedColor.brightYellow);
+      case 104:
+        handler.setBackgroundColor16(NamedColor.brightBlue);
+      case 105:
+        handler.setBackgroundColor16(NamedColor.brightMagenta);
+      case 106:
+        handler.setBackgroundColor16(NamedColor.brightCyan);
+      case 107:
+        handler.setBackgroundColor16(NamedColor.brightWhite);
+      default:
+        return null;
+    }
+    return index;
+  }
+
+  int _handleBackgroundExtendedColor(List<int> params, int index) {
+    if (index + 1 >= params.length) return index;
+
+    switch (params[index + 1]) {
+      case 2:
+        final nextIndex = _readRgbColor(
+          params,
+          index,
+          handler.setBackgroundColorRgb,
+        );
+        return nextIndex;
+      case 5:
+        if (index + 2 >= params.length) return index + 1;
+        handler.setBackgroundColor256(params[index + 2]);
+        return index + 2;
+      default:
+        return index + 1;
+    }
+  }
+
+  int _readRgbColor(
+    List<int> params,
+    int index,
+    void Function(int r, int g, int b) setColor,
+  ) {
+    if (_hasColonColorSpace(index)) {
+      setColor(params[index + 3], params[index + 4], params[index + 5]);
+      return index + 5;
+    }
+    if (index + 4 >= params.length) return params.length;
+
+    setColor(params[index + 2], params[index + 3], params[index + 4]);
+    return index + 4;
+  }
+
+  int? _skipExtendedColorIfNeeded(int param, int index) {
+    switch (param) {
+      case 58:
+        return _skipUnsupportedExtendedColor(index);
+      case 59:
+        return index;
+      default:
+        return null;
     }
   }
 
@@ -1502,7 +1463,12 @@ class EscapeParser {
         if (_queue.isEmpty) {
           return false;
         }
-        if (_queue.consume() == Ascii.backslash) {
+        final next = _queue.peek();
+        if (_isCancelControl(next)) {
+          return true;
+        }
+        if (next == Ascii.backslash) {
+          _queue.consume();
           return true;
         }
       }

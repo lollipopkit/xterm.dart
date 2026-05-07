@@ -30,11 +30,15 @@ void main() {
       ]);
     });
 
-    test('does not answer non-zero DA requests', () {
+    test('does not answer invalid DA requests', () {
       final handler = MockEscapeHandler();
       final parser = EscapeParser(handler);
 
-      parser.write('\x1b[1c\x1b[>1c\x1b[=1c\x1b[0;1c\x1b[>0;1c\x1b[=0;1c');
+      parser.write(
+        '\x1b[1c\x1b[>1c\x1b[=1c'
+        '\x1b[0;1c\x1b[>0;1c\x1b[=0;1c'
+        '\x1b[0;0c\x1b[>0;0c\x1b[=0;0c',
+      );
 
       verifyNever(handler.sendPrimaryDeviceAttributes());
       verifyNever(handler.sendSecondaryDeviceAttributes());
@@ -581,6 +585,16 @@ void main() {
       verifyNever(handler.writeChar(any));
       parser.write('\x1b\\Z');
 
+      verify(handler.writeChar('Z'.codeUnitAt(0))).called(1);
+    });
+
+    test('cancels DCS strings after ESC without consuming the cancel', () {
+      final handler = MockEscapeHandler();
+      final parser = EscapeParser(handler);
+
+      parser.write('\x1bPignored\x1b\x18Z');
+
+      verifyNever(handler.writeChar('i'.codeUnitAt(0)));
       verify(handler.writeChar('Z'.codeUnitAt(0))).called(1);
     });
 

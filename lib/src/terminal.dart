@@ -5,6 +5,7 @@ import 'package:xterm/src/core/buffer/buffer.dart';
 import 'package:xterm/src/core/buffer/cell_offset.dart';
 import 'package:xterm/src/core/buffer/line.dart';
 import 'package:xterm/src/core/cursor.dart';
+import 'package:xterm/src/core/cursor_type.dart';
 import 'package:xterm/src/core/escape/emitter.dart';
 import 'package:xterm/src/core/escape/handler.dart';
 import 'package:xterm/src/core/escape/parser.dart';
@@ -17,7 +18,6 @@ import 'package:xterm/src/core/mouse/mode.dart';
 import 'package:xterm/src/core/platform.dart';
 import 'package:xterm/src/core/state.dart';
 import 'package:xterm/src/core/tabs.dart';
-import 'package:xterm/src/ui/cursor_type.dart';
 import 'package:xterm/src/utils/ascii.dart';
 import 'package:xterm/src/utils/circular_buffer.dart';
 
@@ -202,6 +202,14 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
   @override
   bool get cursorVisibleMode => _cursorVisibleMode;
 
+  /// Cursor shape requested by the application running in the terminal.
+  ///
+  /// This exposes [_cursorTypeOverride], which is updated by cursor-shape
+  /// escape sequences such as `DECSCUSR`. A non-null value overrides the
+  /// cursor type configured by the UI at paint time. A null value means no
+  /// runtime override is active, so the UI should use its configured cursor
+  /// type. Changing this value through terminal input notifies listeners via
+  /// [write] and causes cursor rendering to update.
   TerminalCursorType? get cursorTypeOverride => _cursorTypeOverride;
 
   @override
@@ -336,6 +344,13 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
     onOutput?.call(text);
   }
 
+  /// Reports terminal view focus changes to the application when enabled.
+  ///
+  /// Call this when the input focus state changes, passing true after focus is
+  /// gained and false after focus is lost. If [reportFocusMode] is enabled, the
+  /// corresponding focus-in or focus-out escape sequence is sent immediately via
+  /// [onOutput]. This method only reports focus; it does not move focus itself
+  /// or schedule a focus change.
   void focusInput(bool focused) {
     if (reportFocusMode) {
       onOutput?.call(focused ? '\x1b[I' : '\x1b[O');

@@ -10,8 +10,8 @@ import 'package:xterm/src/ui/pointer_input.dart';
 import 'package:xterm/src/ui/selection_mode.dart';
 
 enum SelectionAnimationType {
-  insert, // 插入新选区
-  update, // 更新现有选区
+  insert, // New selection.
+  update, // Existing selection changed.
 }
 
 class SelectionAnimation {
@@ -48,7 +48,6 @@ class TerminalController with ChangeNotifier {
   CellAnchor? _selectionBase;
   CellAnchor? _selectionExtent;
 
-  // 动画相关状态
   SelectionAnimation? _selectionAnimation;
   CellOffset? _lastSelectionBegin;
   CellOffset? _lastSelectionEnd;
@@ -65,7 +64,6 @@ class TerminalController with ChangeNotifier {
   List<TerminalHighlight> get highlights => _highlights;
   final _highlights = <TerminalHighlight>[];
 
-  // 动画访问器
   SelectionAnimation? get selectionAnimation => _selectionAnimation;
 
   BufferRange? get selection {
@@ -92,16 +90,13 @@ class TerminalController with ChangeNotifier {
     final newBegin = base.offset;
     final newEnd = extent.offset;
 
-    // 检测是插入还是更新
     final isNewSelection = _selectionBase == null || _selectionExtent == null;
     final animationType = isNewSelection
         ? SelectionAnimationType.insert
         : SelectionAnimationType.update;
 
-    // 清理旧动画
     _selectionAnimation?.dispose();
 
-    // 创建新动画
     _selectionAnimation = _createSelectionAnimation(
       type: animationType,
       oldBegin: _lastSelectionBegin,
@@ -110,7 +105,6 @@ class TerminalController with ChangeNotifier {
       newEnd: newEnd,
     );
 
-    // 更新选区
     final oldBase = _selectionBase;
     final oldExtent = _selectionExtent;
 
@@ -131,7 +125,6 @@ class TerminalController with ChangeNotifier {
       _selectionMode = mode;
     }
 
-    // 记录位置用于下次动画
     _lastSelectionBegin = newBegin;
     _lastSelectionEnd = newEnd;
 
@@ -145,41 +138,73 @@ class TerminalController with ChangeNotifier {
     required CellOffset newBegin,
     required CellOffset newEnd,
   }) {
-    final controller = AnimationController(
-      duration: type == SelectionAnimationType.insert
-          ? const Duration(milliseconds: 100)
-          : const Duration(milliseconds: 150),
-      vsync: _vsync,
+    final duration = type == SelectionAnimationType.insert
+        ? const Duration(milliseconds: 100)
+        : const Duration(milliseconds: 150);
+    final controller = _createAndWireSelectionController(duration);
+    final (
+      :scaleAnimation,
+      :positionAnimation,
+    ) = type == SelectionAnimationType.insert
+        ? _buildInsertTweens(controller)
+        : _buildUpdateTweens(controller, oldBegin, newBegin);
+
+    return SelectionAnimation(
+      controller: controller,
+      scaleAnimation: scaleAnimation,
+      positionAnimation: positionAnimation,
+      type: type,
     );
+  }
 
-    late Animation<double> scaleAnimation;
-    late Animation<Offset> positionAnimation;
+  ({Animation<double> scaleAnimation, Animation<Offset> positionAnimation})
+  _buildInsertTweens(AnimationController controller) {
+    final scaleAnimation = Tween<double>(
+      begin: 1.0,
+      end: 1.0,
+    ).animate(CurvedAnimation(parent: controller, curve: Curves.easeOut));
 
-    if (type == SelectionAnimationType.insert) {
-      scaleAnimation = Tween<double>(
-        begin: 1.0,
-        end: 1.0,
-      ).animate(CurvedAnimation(parent: controller, curve: Curves.easeOut));
+    final positionAnimation = Tween<Offset>(
+      begin: Offset.zero,
+      end: Offset.zero,
+    ).animate(controller);
 
-      positionAnimation = Tween<Offset>(
-        begin: Offset.zero,
-        end: Offset.zero,
-      ).animate(controller);
-    } else {
-      scaleAnimation = Tween<double>(begin: 1.0, end: 1.0).animate(controller);
+    return (
+      scaleAnimation: scaleAnimation,
+      positionAnimation: positionAnimation,
+    );
+  }
 
-      final beginOffset = oldBegin != null && oldBegin != newBegin
-          ? Offset(
-              (oldBegin.x - newBegin.x).toDouble(),
-              (oldBegin.y - newBegin.y).toDouble(),
-            )
-          : Offset.zero;
+  ({Animation<double> scaleAnimation, Animation<Offset> positionAnimation})
+  _buildUpdateTweens(
+    AnimationController controller,
+    CellOffset? oldBegin,
+    CellOffset newBegin,
+  ) {
+    final scaleAnimation = Tween<double>(
+      begin: 1.0,
+      end: 1.0,
+    ).animate(controller);
+    final beginOffset = oldBegin != null && oldBegin != newBegin
+        ? Offset(
+            (oldBegin.x - newBegin.x).toDouble(),
+            (oldBegin.y - newBegin.y).toDouble(),
+          )
+        : Offset.zero;
 
-      positionAnimation = Tween<Offset>(
-        begin: beginOffset,
-        end: Offset.zero,
-      ).animate(CurvedAnimation(parent: controller, curve: Curves.easeOut));
-    }
+    final positionAnimation = Tween<Offset>(
+      begin: beginOffset,
+      end: Offset.zero,
+    ).animate(CurvedAnimation(parent: controller, curve: Curves.easeOut));
+
+    return (
+      scaleAnimation: scaleAnimation,
+      positionAnimation: positionAnimation,
+    );
+  }
+
+  AnimationController _createAndWireSelectionController(Duration duration) {
+    final controller = AnimationController(duration: duration, vsync: _vsync);
 
     controller.addStatusListener((status) {
       if (status == AnimationStatus.completed) {
@@ -194,13 +219,7 @@ class TerminalController with ChangeNotifier {
     });
 
     controller.forward();
-
-    return SelectionAnimation(
-      controller: controller,
-      scaleAnimation: scaleAnimation,
-      positionAnimation: positionAnimation,
-      type: type,
-    );
+    return controller;
   }
 
   BufferRange _createRange(CellOffset begin, CellOffset end) {
@@ -221,7 +240,6 @@ class TerminalController with ChangeNotifier {
   }
 
   void clearSelection() {
-    // 清理动画
     _selectionAnimation?.dispose();
     _selectionAnimation = null;
 

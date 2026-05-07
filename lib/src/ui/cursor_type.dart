@@ -1,7 +1,1 @@
-enum TerminalCursorType {
-  block,
-
-  underline,
-
-  verticalBar,
-}
+export 'package:xterm/src/core/cursor_type.dart';

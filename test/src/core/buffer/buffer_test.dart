@@ -233,7 +233,10 @@ void main() {
       terminal.setCursor(1, 0);
       terminal.buffer.eraseLineToCursor();
 
-      expect(terminal.buffer.lines[0].toString(), 'c');
+      final line = terminal.buffer.lines[0];
+      expect(line.getCodePoint(0), 0);
+      expect(line.getCodePoint(1), 0);
+      expect(line.getCodePoint(2), 'c'.codeUnitAt(0));
     });
   });
 
@@ -246,8 +249,15 @@ void main() {
       terminal.setCursor(1, 1);
       terminal.buffer.eraseDisplayToCursor();
 
-      expect(terminal.buffer.lines[0].toString(), '');
-      expect(terminal.buffer.lines[1].toString(), 'f');
+      final firstLine = terminal.buffer.lines[0];
+      expect(firstLine.getCodePoint(0), 0);
+      expect(firstLine.getCodePoint(1), 0);
+      expect(firstLine.getCodePoint(2), 0);
+
+      final secondLine = terminal.buffer.lines[1];
+      expect(secondLine.getCodePoint(0), 0);
+      expect(secondLine.getCodePoint(1), 0);
+      expect(secondLine.getCodePoint(2), 'f'.codeUnitAt(0));
     });
   });
 
