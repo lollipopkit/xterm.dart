@@ -64,6 +64,8 @@ class TerminalController with ChangeNotifier {
   List<TerminalHighlight> get highlights => _highlights;
   final _highlights = <TerminalHighlight>[];
 
+  bool _isDisposing = false;
+
   SelectionAnimation? get selectionAnimation => _selectionAnimation;
 
   BufferRange? get selection {
@@ -210,12 +212,16 @@ class TerminalController with ChangeNotifier {
       if (status == AnimationStatus.completed) {
         _selectionAnimation?.dispose();
         _selectionAnimation = null;
-        notifyListeners();
+        if (!_isDisposing) {
+          notifyListeners();
+        }
       }
     });
 
     controller.addListener(() {
-      notifyListeners();
+      if (!_isDisposing) {
+        notifyListeners();
+      }
     });
 
     controller.forward();
@@ -283,7 +289,9 @@ class TerminalController with ChangeNotifier {
 
     highlight.registerCallback(() {
       _highlights.remove(highlight);
-      notifyListeners();
+      if (!_isDisposing) {
+        notifyListeners();
+      }
     });
 
     return highlight;
@@ -291,6 +299,8 @@ class TerminalController with ChangeNotifier {
 
   @override
   void dispose() {
+    _isDisposing = true;
+
     _selectionAnimation?.dispose();
     _selectionAnimation = null;
 
