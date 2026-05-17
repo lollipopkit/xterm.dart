@@ -74,14 +74,26 @@ class IndexAwareCircularBuffer<T extends IndexedItem> {
 
     if (value == _array.length) return;
 
-    // Reconstruct array, starting at index 0. Only transfer values from the
-    // indexes 0 to length.
+    var copyStart = 0;
+    var copyLength = _length;
+
+    if (copyLength > value) {
+      copyStart = copyLength - value;
+      for (var i = 0; i < copyStart; i++) {
+        _dropChild(i);
+      }
+      _absoluteStartIndex += copyStart;
+      copyLength = value;
+    }
+
+    // Reconstruct array, starting at index 0. Only transfer retained values.
     final newArray = List<T?>.generate(
       value,
-      (index) => index < _length ? _getChild(index) : null,
+      (index) => index < copyLength ? _getChild(index + copyStart) : null,
     );
 
     _startIndex = 0;
+    _length = copyLength;
     _array = newArray;
   }
 
@@ -159,18 +171,21 @@ class IndexAwareCircularBuffer<T extends IndexedItem> {
   /// Deletes [count] elements starting at [index], shifting all elements after
   /// [index] to the left.
   void remove(int index, [int count = 1]) {
-    if (count > 0) {
-      if (index + count >= _length) {
-        count = _length - index;
-      }
-      for (var i = index; i < _length - count; i++) {
-        _moveChild(i + count, i);
-      }
-      for (var i = _length - count; i < _length; i++) {
-        _dropChild(i);
-      }
-      _length -= count;
+    RangeError.checkValueInInterval(index, 0, _length, 'index');
+    if (count <= 0 || index == _length) {
+      return;
     }
+
+    if (index + count >= _length) {
+      count = _length - index;
+    }
+    for (var i = index; i < _length - count; i++) {
+      _moveChild(i + count, i);
+    }
+    for (var i = _length - count; i < _length; i++) {
+      _dropChild(i);
+    }
+    _length -= count;
   }
 
   /// Inserts [item] at [index], shifting all elements after [index] to the
@@ -204,6 +219,8 @@ class IndexAwareCircularBuffer<T extends IndexedItem> {
 
   /// Inserts [items] at [index] in order.
   void insertAll(int index, List<T> items) {
+    RangeError.checkValueInInterval(index, 0, _length, 'index');
+
     for (var i = items.length - 1; i >= 0; i--) {
       insert(index, items[i]);
       // when the list is full then we have to move the index down
@@ -223,9 +240,16 @@ class IndexAwareCircularBuffer<T extends IndexedItem> {
   /// This method is cheap since it does not actually modify the list, but
   /// instead just adjusts the start index and length.
   void trimStart(int count) {
+    if (count <= 0) return;
     if (count > _length) count = _length;
+
+    for (var i = 0; i < count; i++) {
+      _dropChild(i);
+    }
+
     _startIndex += count;
     _startIndex %= _array.length;
+    _absoluteStartIndex += count;
     _length -= count;
   }
 
@@ -241,7 +265,9 @@ class IndexAwareCircularBuffer<T extends IndexedItem> {
     }
 
     for (var i = 0; i < copyStart; i++) {
-      _dropChild(i);
+      if (replacement[i].attached) {
+        replacement[i]._detach();
+      }
     }
 
     final copyLength = replacement.length - copyStart;

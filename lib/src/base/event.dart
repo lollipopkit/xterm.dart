@@ -7,23 +7,30 @@ class Event<T> {
 
   Event(this.emitter);
 
-  void call(EventListener<T> listener) {
-    emitter(listener);
+  EventSubscription<T> call(EventListener<T> listener) {
+    return emitter(listener);
   }
 }
 
 class EventEmitter<T> {
-  final _listeners = <EventListener<T>>[];
+  final _listeners = <_EventListenerEntry<T>>[];
 
   EventSubscription<T> call(EventListener<T> listener) {
-    _listeners.add(listener);
-    return EventSubscription(this, listener);
+    final entry = _EventListenerEntry(listener);
+    _listeners.add(entry);
+    return EventSubscription._(this, entry);
   }
 
   void emit(T event) {
-    for (final listener in _listeners) {
-      listener(event);
+    for (final entry in _listeners.toList()) {
+      if (_listeners.contains(entry)) {
+        entry.listener(event);
+      }
     }
+  }
+
+  void clear() {
+    _listeners.clear();
   }
 
   Event<T> get event => Event(this);
@@ -31,12 +38,25 @@ class EventEmitter<T> {
 
 class EventSubscription<T> with Disposable {
   final EventEmitter<T> emitter;
-  final EventListener<T> listener;
+  final _EventListenerEntry<T> _entry;
 
-  EventSubscription(this.emitter, this.listener);
+  EventSubscription._(this.emitter, this._entry);
+
+  EventListener<T> get listener => _entry.listener;
 
   @override
   void dispose() {
-    emitter._listeners.remove(listener);
+    if (disposed) {
+      return;
+    }
+
+    emitter._listeners.remove(_entry);
+    super.dispose();
   }
+}
+
+class _EventListenerEntry<T> {
+  _EventListenerEntry(this.listener);
+
+  final EventListener<T> listener;
 }

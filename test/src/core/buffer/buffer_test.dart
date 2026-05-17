@@ -146,16 +146,10 @@ void main() {
         terminal.write('line$i\r\n');
       }
 
-      print(terminal.buffer);
-
       terminal.setMargins(2, 6);
       terminal.setCursor(0, 4);
 
-      print(terminal.buffer.absoluteCursorY);
-
       terminal.buffer.insertLines(1);
-
-      print(terminal.buffer);
 
       expect(terminal.buffer.lines[3].toString(), 'line3');
       expect(terminal.buffer.lines[4].toString(), ''); // inserted
@@ -228,6 +222,43 @@ void main() {
     expect(terminal.buffer.lines[7].toString(), '');
     expect(terminal.buffer.lines[8].toString(), 'line9');
     expect(terminal.buffer.lines[9].toString(), 'line10');
+  });
+
+  group('Buffer.eraseLineToCursor()', () {
+    test('erases the cursor cell', () {
+      final terminal = Terminal();
+      terminal.resize(3, 3);
+      terminal.write('abc');
+
+      terminal.setCursor(1, 0);
+      terminal.buffer.eraseLineToCursor();
+
+      final line = terminal.buffer.lines[0];
+      expect(line.getCodePoint(0), 0);
+      expect(line.getCodePoint(1), 0);
+      expect(line.getCodePoint(2), 'c'.codeUnitAt(0));
+    });
+  });
+
+  group('Buffer.eraseDisplayToCursor()', () {
+    test('erases the cursor cell', () {
+      final terminal = Terminal();
+      terminal.resize(3, 3);
+      terminal.write('abc\r\ndef');
+
+      terminal.setCursor(1, 1);
+      terminal.buffer.eraseDisplayToCursor();
+
+      final firstLine = terminal.buffer.lines[0];
+      expect(firstLine.getCodePoint(0), 0);
+      expect(firstLine.getCodePoint(1), 0);
+      expect(firstLine.getCodePoint(2), 0);
+
+      final secondLine = terminal.buffer.lines[1];
+      expect(secondLine.getCodePoint(0), 0);
+      expect(secondLine.getCodePoint(1), 0);
+      expect(secondLine.getCodePoint(2), 'f'.codeUnitAt(0));
+    });
   });
 
   group('Buffer.eraseDisplayFromCursor()', () {

@@ -2,12 +2,14 @@ typedef CharsetTranslator = int Function(int);
 
 final _charsets = <int, CharsetTranslator>{
   '0'.codeUnitAt(0): decSpecGraphicsTranslator,
+  'A'.codeUnitAt(0): ukTranslator,
   'B'.codeUnitAt(0): asciiTranslator,
 };
 
 class Charset {
   var _charsetMap = <int, CharsetTranslator>{};
   var _currentIndex = 0;
+  int? _singleShiftIndex;
 
   var _savedCharsetMap = <int, CharsetTranslator>{};
   var _savedIndex = 0;
@@ -19,6 +21,12 @@ class Charset {
   }
 
   int translate(int codePoint) {
+    final singleShiftIndex = _singleShiftIndex;
+    if (singleShiftIndex != null) {
+      _singleShiftIndex = null;
+      final translator = _charsetMap[singleShiftIndex] ?? asciiTranslator;
+      return translator(codePoint);
+    }
     return _cached(codePoint);
   }
 
@@ -35,14 +43,28 @@ class Charset {
     _updateCache();
   }
 
+  void useOnce(int index) {
+    _singleShiftIndex = index;
+  }
+
   void save() {
     _savedCharsetMap = Map.from(_charsetMap);
     _savedIndex = _currentIndex;
   }
 
   void restore() {
-    _charsetMap = _savedCharsetMap;
+    _charsetMap = Map.from(_savedCharsetMap);
     _currentIndex = _savedIndex;
+    _singleShiftIndex = null;
+    _updateCache();
+  }
+
+  void reset() {
+    _charsetMap.clear();
+    _currentIndex = 0;
+    _singleShiftIndex = null;
+    _savedCharsetMap.clear();
+    _savedIndex = 0;
     _updateCache();
   }
 }
@@ -84,6 +106,10 @@ const decSpecGraphics = <int, int>{
 
 int asciiTranslator(int codePoint) {
   return codePoint;
+}
+
+int ukTranslator(int codePoint) {
+  return codePoint == 0x23 ? 0x00A3 : codePoint;
 }
 
 int decSpecGraphicsTranslator(int codePoint) {

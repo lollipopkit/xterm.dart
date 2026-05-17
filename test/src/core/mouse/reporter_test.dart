@@ -12,7 +12,7 @@ void main() {
         MouseReportMode.normal,
       );
 
-      expect(output, equals('\x1B[M !"'));
+      expect(output, equals('\x1B[M !!'));
     });
 
     test('report() supports utf mode', () {
@@ -23,7 +23,7 @@ void main() {
         MouseReportMode.utf,
       );
 
-      expect(output, equals('\x1B[M !"'));
+      expect(output, equals('\x1B[M !!'));
     });
 
     test('report() supports sgr mode', () {
@@ -35,6 +35,17 @@ void main() {
       );
 
       expect(output, equals('\x1B[<0;1;1M'));
+    });
+
+    test('report() uses xterm wheel button codes', () {
+      final output = MouseReporter.report(
+        TerminalMouseButton.wheelUp,
+        TerminalMouseButtonState.down,
+        CellOffset(0, 0),
+        MouseReportMode.sgr,
+      );
+
+      expect(output, equals('\x1B[<64;1;1M'));
     });
 
     test('report() supports urxvt mode', () {

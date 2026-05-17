@@ -107,6 +107,11 @@ class _TerminalDebuggerHandler implements EscapeHandler {
   }
 
   @override
+  void backTab(int amount) {
+    onCommand('backTab $amount');
+  }
+
+  @override
   void lineFeed() {
     onCommand('lineFeed');
   }
@@ -124,6 +129,11 @@ class _TerminalDebuggerHandler implements EscapeHandler {
   @override
   void shiftIn() {
     onCommand('shiftIn');
+  }
+
+  @override
+  void singleShift(int charset) {
+    onCommand('singleShift($charset)');
   }
 
   @override
@@ -164,6 +174,16 @@ class _TerminalDebuggerHandler implements EscapeHandler {
   }
 
   @override
+  void backIndex() {
+    onCommand('backIndex');
+  }
+
+  @override
+  void forwardIndex() {
+    onCommand('forwardIndex');
+  }
+
+  @override
   void designateCharset(int charset, int name) {
     onCommand('designateCharset($charset, $name)');
   }
@@ -171,6 +191,21 @@ class _TerminalDebuggerHandler implements EscapeHandler {
   @override
   void unkownEscape(int char) {
     onCommand('unkownEscape(${String.fromCharCode(char)})', error: true);
+  }
+
+  @override
+  void resetTerminal() {
+    onCommand('resetTerminal');
+  }
+
+  @override
+  void softResetTerminal() {
+    onCommand('softResetTerminal');
+  }
+
+  @override
+  void screenAlignmentPattern() {
+    onCommand('screenAlignmentPattern');
   }
 
   /* CSI */
@@ -243,6 +278,11 @@ class _TerminalDebuggerHandler implements EscapeHandler {
   @override
   void sendCursorPosition() {
     onCommand('sendCursorPosition');
+  }
+
+  @override
+  void sendExtendedCursorPosition() {
+    onCommand('sendExtendedCursorPosition');
   }
 
   @override
@@ -405,6 +445,11 @@ class _TerminalDebuggerHandler implements EscapeHandler {
   }
 
   @override
+  void setCursorShape(int shape) {
+    onCommand('setCursorShape($shape)');
+  }
+
+  @override
   void useAltBuffer() {
     onCommand('useAltBuffer');
   }
@@ -497,6 +542,11 @@ class _TerminalDebuggerHandler implements EscapeHandler {
   }
 
   @override
+  void setCursorOverline() {
+    onCommand('setCursorOverline');
+  }
+
+  @override
   void unsetCursorBold() {
     onCommand('unsetCursorBold');
   }
@@ -534,6 +584,11 @@ class _TerminalDebuggerHandler implements EscapeHandler {
   @override
   void unsetCursorStrikethrough() {
     onCommand('unsetCursorStrikethrough');
+  }
+
+  @override
+  void unsetCursorOverline() {
+    onCommand('unsetCursorOverline');
   }
 
   @override

@@ -62,7 +62,20 @@ class TerminalStyle {
     bool bold = false,
     bool italic = false,
     bool underline = false,
+    bool strikethrough = false,
+    bool overline = false,
   }) {
+    final decorations = <TextDecoration>[];
+    if (underline) {
+      decorations.add(TextDecoration.underline);
+    }
+    if (strikethrough) {
+      decorations.add(TextDecoration.lineThrough);
+    }
+    if (overline) {
+      decorations.add(TextDecoration.overline);
+    }
+
     return TextStyle(
       fontSize: fontSize,
       height: height,
@@ -72,7 +85,9 @@ class TerminalStyle {
       backgroundColor: backgroundColor,
       fontWeight: bold ? FontWeight.bold : FontWeight.normal,
       fontStyle: italic ? FontStyle.italic : FontStyle.normal,
-      decoration: underline ? TextDecoration.underline : TextDecoration.none,
+      decoration: decorations.isEmpty
+          ? TextDecoration.none
+          : TextDecoration.combine(decorations),
       letterSpacing: letterSpacing,
     );
   }

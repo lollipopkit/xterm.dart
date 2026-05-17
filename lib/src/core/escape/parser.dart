@@ -42,13 +42,65 @@ class EscapeParser {
           _queue.rollback(tokenEnd - tokenBegin);
           return;
         }
+      } else if (char == _c1ControlSequenceIntroducer) {
+        final processed = _escHandleCSI();
+        if (!processed) {
+          _queue.rollback(tokenEnd - tokenBegin);
+          return;
+        }
+      } else if (char == _c1OperatingSystemCommand) {
+        final processed = _escHandleOSC();
+        if (!processed) {
+          _queue.rollback(tokenEnd - tokenBegin);
+          return;
+        }
+      } else if (_processC1Control(char)) {
+        // Handled above.
+      } else if (char == _c1SingleShift2) {
+        handler.singleShift(2);
+      } else if (char == _c1SingleShift3) {
+        handler.singleShift(3);
+      } else if (_isC1StringControl(char)) {
+        final processed = _consumeStringControl();
+        if (!processed) {
+          _queue.rollback(tokenEnd - tokenBegin);
+          return;
+        }
       } else {
         _processChar(char);
       }
     }
   }
 
+  bool _processC1Control(int char) {
+    switch (char) {
+      case _c1Index:
+        handler.index();
+        return true;
+      case _c1NextLine:
+        handler.nextLine();
+        return true;
+      case _c1HorizontalTabSet:
+        handler.setTapStop();
+        return true;
+      case _c1ReverseIndex:
+        handler.reverseIndex();
+        return true;
+      default:
+        return false;
+    }
+  }
+
   void _processChar(int char) {
+    if (char == Ascii.NULL || _isCancelControl(char) || char == Ascii.DEL) {
+      return;
+    }
+
+    if (_isC1Control(char)) {
+      handler.unknownSBC(char);
+      return;
+    }
+
     if (char > _sbcHandlers.maxIndex) {
       handler.writeChar(char);
       return;
@@ -56,7 +108,7 @@ class EscapeParser {
 
     final sbcHandler = _sbcHandlers[char];
     if (sbcHandler == null) {
-      handler.unkownEscape(char);
+      handler.unknownSBC(char);
       return;
     }
 
@@ -66,17 +118,37 @@ class EscapeParser {
   /// Processes a sequence of characters that starts with an escape character.
   /// Returns [true] if the sequence was processed, [false] if it was not.
   bool _processEscape() {
-    if (_queue.isEmpty) return false;
+    while (true) {
+      if (_queue.isEmpty) return false;
 
-    final escapeChar = _queue.consume();
-    final escapeHandler = _escHandlers[escapeChar];
+      final escapeChar = _queue.consume();
 
-    if (escapeHandler == null) {
-      handler.unkownEscape(escapeChar);
-      return true;
+      if (_isCancelControl(escapeChar)) {
+        return true;
+      }
+
+      if (escapeChar == Ascii.NULL || escapeChar == Ascii.DEL) {
+        continue;
+      }
+
+      if (escapeChar == Ascii.ESC) {
+        continue;
+      }
+
+      if (escapeChar > Ascii.NULL && escapeChar < Ascii.space) {
+        _processChar(escapeChar);
+        continue;
+      }
+
+      final escapeHandler = _escHandlers[escapeChar];
+
+      if (escapeHandler == null) {
+        handler.unkownEscape(escapeChar);
+        return true;
+      }
+
+      return escapeHandler();
     }
-
-    return escapeHandler();
   }
 
   late final _sbcHandlers = FastLookupTable<_SbcHandler>({
@@ -94,22 +166,56 @@ class EscapeParser {
   late final _escHandlers = FastLookupTable<_EscHandler>({
     '['.charCode: _escHandleCSI,
     ']'.charCode: _escHandleOSC,
+    ' '.charCode: _escHandleSpace,
+    '6'.charCode: _escHandleBackIndex,
     '7'.charCode: _escHandleSaveCursor,
     '8'.charCode: _escHandleRestoreCursor,
+    '9'.charCode: _escHandleForwardIndex,
     'D'.charCode: _escHandleIndex,
     'E'.charCode: _escHandleNextLine,
     'H'.charCode: _escHandleTabSet,
     'M'.charCode: _escHandleReverseIndex,
-    // 'P'.charCode: _unsupportedHandler, // Sixel
-    // 'c'.charCode: _unsupportedHandler,
-    // '#'.charCode: _unsupportedHandler,
+    'N'.charCode: _escHandleSingleShift2,
+    'O'.charCode: _escHandleSingleShift3,
+    'P'.charCode: _escHandleStringControl, // DCS
+    'X'.charCode: _escHandleStringControl, // SOS
+    'Z'.charCode: _escHandleIdentifyTerminal,
+    '^'.charCode: _escHandleStringControl, // PM
+    '_'.charCode: _escHandleStringControl, // APC
+    'c'.charCode: _escHandleResetTerminal,
+    '#'.charCode: _escHandleHash,
+    '%'.charCode: _escHandleDesignateCodingSystem,
     '('.charCode: _escHandleDesignateCharset0, //  SCS - G0
     ')'.charCode: _escHandleDesignateCharset1, //  SCS - G1
     '*'.charCode: _escHandleDesignateCharset2,
     '+'.charCode: _escHandleDesignateCharset3,
+    '-'.charCode: _escHandleDesignateCharset1,
+    '.'.charCode: _escHandleDesignateCharset2,
+    '/'.charCode: _escHandleDesignateCharset3,
+    '<'.charCode: _escHandleEnterAnsiMode,
     '='.charCode: _escHandleSetAppKeypadMode,
     '>'.charCode: _escHandleResetAppKeypadMode,
   });
+
+  /// `ESC SP F`/`ESC SP G` select 7-bit/8-bit C1 controls (S7C1T/S8C1T).
+  ///
+  /// Both forms of C1 controls are accepted by this parser, so the sequence is
+  /// consumed without changing runtime state.
+  bool _escHandleSpace() {
+    return _consumeEscapeFinalByte() != null;
+  }
+
+  /// `ESC 6` Back Index (DECBI)
+  bool _escHandleBackIndex() {
+    handler.backIndex();
+    return true;
+  }
+
+  /// `ESC 9` Forward Index (DECFI)
+  bool _escHandleForwardIndex() {
+    handler.forwardIndex();
+    return true;
+  }
 
   /// `ESC 7` Save Cursor (DECSC)
   ///
@@ -159,37 +265,108 @@ class EscapeParser {
     return true;
   }
 
-  bool _escHandleDesignateCharset0() {
-    if (_queue.isEmpty) return false;
-    int name = _queue.consume();
-    handler.designateCharset(0, name);
+  bool _escHandleDesignateCodingSystem() {
+    final code = _consumeEscapeFinalByte();
+    if (code == null) return false;
     return true;
+  }
+
+  int? _consumeEscapeFinalByte() {
+    while (true) {
+      if (_queue.isEmpty) return null;
+      final char = _queue.consume();
+
+      if (_isCancelControl(char)) {
+        return _escapeSequenceCanceled;
+      }
+
+      if (char == Ascii.ESC) {
+        _queue.rollback();
+        return _escapeSequenceCanceled;
+      }
+
+      if (char == Ascii.NULL || char == Ascii.DEL) {
+        continue;
+      }
+
+      if (char > Ascii.NULL && char < Ascii.space) {
+        _processChar(char);
+        continue;
+      }
+
+      return char;
+    }
+  }
+
+  bool _escHandleSingleShift2() {
+    handler.singleShift(2);
+    return true;
+  }
+
+  bool _escHandleSingleShift3() {
+    handler.singleShift(3);
+    return true;
+  }
+
+  bool _escHandleDesignateCharset0() {
+    return _escHandleDesignateCharset(0);
   }
 
   bool _escHandleDesignateCharset1() {
-    if (_queue.isEmpty) return false;
-    int name = _queue.consume();
-    handler.designateCharset(1, name);
-    return true;
+    return _escHandleDesignateCharset(1);
   }
 
   bool _escHandleDesignateCharset2() {
-    if (_queue.isEmpty) return false;
-    final name = _queue.consume();
-    handler.designateCharset(2, name);
-    return true;
+    return _escHandleDesignateCharset(2);
   }
 
   bool _escHandleDesignateCharset3() {
-    if (_queue.isEmpty) return false;
-    final name = _queue.consume();
-    handler.designateCharset(3, name);
+    return _escHandleDesignateCharset(3);
+  }
+
+  bool _escHandleDesignateCharset(int charset) {
+    final name = _consumeEscapeFinalByte();
+    if (name == null) return false;
+    if (name != _escapeSequenceCanceled) {
+      handler.designateCharset(charset, name);
+    }
     return true;
   }
 
   /// `ESC =` Set Application Keypad Mode (DECKPAM)
   ///
   /// https://terminalguide.namepad.de/seq/a_esc_x3d_equals/
+  bool _escHandleStringControl() {
+    return _consumeStringControl();
+  }
+
+  /// `ESC <` Exit VT52 mode and enter ANSI mode.
+  bool _escHandleEnterAnsiMode() {
+    handler.setAnsiMode(true);
+    return true;
+  }
+
+  /// `ESC Z` Identify Terminal (DECID), obsolete alias for primary DA.
+  bool _escHandleIdentifyTerminal() {
+    handler.sendPrimaryDeviceAttributes();
+    return true;
+  }
+
+  /// `ESC c` Reset to Initial State (RIS)
+  bool _escHandleResetTerminal() {
+    handler.resetTerminal();
+    return true;
+  }
+
+  bool _escHandleHash() {
+    final code = _consumeEscapeFinalByte();
+    if (code == null) return false;
+    if (code == Ascii.num8) {
+      handler.screenAlignmentPattern();
+    }
+    return true;
+  }
+
   bool _escHandleSetAppKeypadMode() {
     handler.setAppKeypadMode(true);
     return true;
@@ -207,6 +384,22 @@ class EscapeParser {
     final consumed = _consumeCsi();
     if (!consumed) return false;
 
+    if (_csi.finalByte == 0) {
+      return true;
+    }
+
+    if (_csi.intermediates.isNotEmpty &&
+        _csi.finalByte != Ascii.p &&
+        _csi.finalByte != Ascii.q) {
+      handler.unknownCSI(_csi.finalByte);
+      return true;
+    }
+
+    if (_csi.prefix != null && !_isSupportedPrefixedCsi()) {
+      handler.unknownCSI(_csi.finalByte);
+      return true;
+    }
+
     final csiHandler = _csiHandlers[_csi.finalByte];
 
     if (csiHandler == null) {
@@ -220,7 +413,12 @@ class EscapeParser {
 
   /// The last parsed [_Csi]. This is a mutable singletion by design to reduce
   /// object allocations.
-  final _csi = _Csi(finalByte: 0, params: []);
+  final _csi = _Csi(
+    finalByte: 0,
+    params: [],
+    separators: [],
+    intermediates: [],
+  );
 
   /// Parse a CSI from the head of the queue. Return false if the CSI isn't
   /// complete. After a CSI is successfully parsed, [_csi] is updated.
@@ -230,10 +428,12 @@ class EscapeParser {
     }
 
     _csi.params.clear();
+    _csi.separators.clear();
+    _csi.intermediates.clear();
 
     // test whether the csi is a `CSI ? Ps ...` or `CSI Ps ...`
     final prefix = _queue.peek();
-    if (prefix >= Ascii.colon && prefix <= Ascii.questionMark) {
+    if (prefix >= Ascii.lessThan && prefix <= Ascii.questionMark) {
       _csi.prefix = prefix;
       _queue.consume();
     } else {
@@ -250,11 +450,27 @@ class EscapeParser {
 
       final char = _queue.consume();
 
-      if (char == Ascii.semicolon) {
-        if (hasParam) {
-          _csi.params.add(param);
-        }
+      if (_isCancelControl(char)) {
+        _csi.finalByte = 0;
+        return true;
+      }
+
+      if (char == Ascii.ESC) {
+        _queue.rollback();
+        _csi.finalByte = 0;
+        return true;
+      }
+
+      if (char > Ascii.NULL && char < Ascii.space) {
+        _processChar(char);
+        continue;
+      }
+
+      if (char == Ascii.semicolon || char == Ascii.colon) {
+        _csi.separators.add(char);
+        _csi.params.add(hasParam ? param : 0);
         param = 0;
+        hasParam = false;
         continue;
       }
 
@@ -266,13 +482,13 @@ class EscapeParser {
       }
 
       if (char > Ascii.NULL && char < Ascii.num0) {
-        // intermediates.add(char);
+        _csi.intermediates.add(char);
         continue;
       }
 
       if (char >= Ascii.atSign && char <= Ascii.tilde) {
-        if (hasParam) {
-          _csi.params.add(param);
+        if (hasParam || _csi.params.isNotEmpty) {
+          _csi.params.add(hasParam ? param : 0);
         }
 
         _csi.finalByte = char;
@@ -281,19 +497,40 @@ class EscapeParser {
     }
   }
 
+  bool _isSupportedPrefixedCsi() {
+    switch (_csi.finalByte) {
+      case Ascii.c:
+        return _csi.prefix == Ascii.greaterThan || _csi.prefix == Ascii.equal;
+      case Ascii.h:
+      case Ascii.l:
+      case Ascii.n:
+      case Ascii.J:
+      case Ascii.K:
+        return _csi.prefix == Ascii.questionMark;
+      default:
+        return false;
+    }
+  }
+
   late final _csiHandlers = FastLookupTable<_CsiHandler>({
-    // 'a'.codeUnitAt(0): _csiHandleCursorHorizontalRelative,
+    '`'.codeUnitAt(0): _csiHandleCursorHorizontalAbsolute,
+    'a'.codeUnitAt(0): _csiHandleCursorForward,
     'b'.codeUnitAt(0): _csiHandleRepeatPreviousCharacter,
     'c'.codeUnitAt(0): _csiHandleSendDeviceAttributes,
     'd'.codeUnitAt(0): _csiHandleLinePositionAbsolute,
+    'e'.codeUnitAt(0): _csiHandleCursorDown,
     'f'.codeUnitAt(0): _csiHandleCursorPosition,
     'g'.codeUnitAt(0): _csiHandelClearTabStop,
     'h'.codeUnitAt(0): _csiHandleMode,
     'l'.codeUnitAt(0): _csiHandleMode,
     'm'.codeUnitAt(0): _csiHandleSgr,
     'n'.codeUnitAt(0): _csiHandleDeviceStatusReport,
+    'p'.codeUnitAt(0): _csiHandleSoftReset,
+    'q'.codeUnitAt(0): _csiHandleSetCursorShape,
     'r'.codeUnitAt(0): _csiHandleSetMargins,
+    's'.codeUnitAt(0): _csiHandleSaveCursor,
     't'.codeUnitAt(0): _csiWindowManipulation,
+    'u'.codeUnitAt(0): _csiHandleRestoreCursor,
     'A'.codeUnitAt(0): _csiHandleCursorUp,
     'B'.codeUnitAt(0): _csiHandleCursorDown,
     'C'.codeUnitAt(0): _csiHandleCursorForward,
@@ -302,6 +539,7 @@ class EscapeParser {
     'F'.codeUnitAt(0): _csiHandleCursorPrecedingLine,
     'G'.codeUnitAt(0): _csiHandleCursorHorizontalAbsolute,
     'H'.codeUnitAt(0): _csiHandleCursorPosition,
+    'I'.codeUnitAt(0): _csiHandleCursorForwardTab,
     'J'.codeUnitAt(0): _csiHandleEraseDisplay,
     'K'.codeUnitAt(0): _csiHandleEraseLine,
     'L'.codeUnitAt(0): _csiHandleInsertLines,
@@ -310,19 +548,9 @@ class EscapeParser {
     'S'.codeUnitAt(0): _csiHandleScrollUp,
     'T'.codeUnitAt(0): _csiHandleScrollDown,
     'X'.codeUnitAt(0): _csiHandleEraseCharacters,
+    'Z'.codeUnitAt(0): _csiHandleCursorBackwardTab,
     '@'.codeUnitAt(0): _csiHandleInsertBlankCharacters,
   });
-
-  /// `ESC [ Ps a` Cursor Horizontal Position Relative (HPR)
-  ///
-  /// https://terminalguide.namepad.de/seq/csi_sa/
-  // void _csiHandleCursorHorizontalRelative() {
-  //   if (_csi.params.isEmpty) {
-  //     handler.cursorHorizontal(1);
-  //   } else {
-  //     handler.cursorHorizontal(_csi.params[0]);
-  //   }
-  // }
 
   /// `ESC [ Ps b` Repeat Previous Character (REP)
   ///
@@ -342,13 +570,20 @@ class EscapeParser {
   ///
   /// https://terminalguide.namepad.de/seq/csi_sc/
   void _csiHandleSendDeviceAttributes() {
+    final params = _csi.params;
+    final isDefaultRequest =
+        params.isEmpty || params.length == 1 && params[0] == 0;
+    if (!isDefaultRequest) {
+      return;
+    }
+
     switch (_csi.prefix) {
+      case null:
+        return handler.sendPrimaryDeviceAttributes();
       case Ascii.greaterThan:
         return handler.sendSecondaryDeviceAttributes();
       case Ascii.equal:
         return handler.sendTertiaryDeviceAttributes();
-      default:
-        handler.sendPrimaryDeviceAttributes();
     }
   }
 
@@ -356,11 +591,7 @@ class EscapeParser {
   ///
   /// https://terminalguide.namepad.de/seq/csi_sd/
   void _csiHandleLinePositionAbsolute() {
-    var y = 1;
-
-    if (_csi.params.isNotEmpty) {
-      y = _csi.params[0];
-    }
+    final y = _paramOrDefault(0, 1);
 
     handler.setCursorY(y - 1);
   }
@@ -369,13 +600,8 @@ class EscapeParser {
   ///
   /// https://terminalguide.namepad.de/seq/csi_sf/
   void _csiHandleCursorPosition() {
-    var row = 1;
-    var col = 1;
-
-    if (_csi.params.length == 2) {
-      row = _csi.params[0];
-      col = _csi.params[1];
-    }
+    final row = _paramOrDefault(0, 1);
+    final col = _paramOrDefault(1, 1);
 
     handler.setCursor(col - 1, row - 1);
   }
@@ -386,14 +612,14 @@ class EscapeParser {
   void _csiHandelClearTabStop() {
     var cmd = 0;
 
-    if (_csi.params.length == 1) {
+    if (_csi.params.isNotEmpty) {
       cmd = _csi.params[0];
     }
 
     switch (cmd) {
       case 0:
         return handler.clearTabStopUnderCursor();
-      default:
+      case 3:
         return handler.clearAllTabStops();
     }
   }
@@ -428,208 +654,227 @@ class EscapeParser {
       return handler.resetCursorStyle();
     }
 
-    // This is a workaround for a bug in the analyzer.
-    // ignore: dead_code
-    for (var i = 0; i < _csi.params.length; i++) {
+    for (var i = 0; i < params.length; i++) {
       final param = params[i];
-      switch (param) {
-        case 0:
-          handler.resetCursorStyle();
-          continue;
-        case 1:
-          handler.setCursorBold();
-          continue;
-        case 2:
-          handler.setCursorFaint();
-          continue;
-        case 3:
-          handler.setCursorItalic();
-          continue;
-        case 4:
-          handler.setCursorUnderline();
-          continue;
-        case 5:
-          handler.setCursorBlink();
-          continue;
-        case 7:
-          handler.setCursorInverse();
-          continue;
-        case 8:
-          handler.setCursorInvisible();
-          continue;
-        case 9:
-          handler.setCursorStrikethrough();
-          continue;
+      final nextIndex =
+          _handleBasicStyles(param, i) ??
+          _handleForegroundColor(params, i) ??
+          _handleBackgroundColor(params, i) ??
+          _skipExtendedColorIfNeeded(param, i);
 
-        case 21:
-          handler.unsetCursorBold();
-          continue;
-        case 22:
-          handler.unsetCursorFaint();
-          continue;
-        case 23:
-          handler.unsetCursorItalic();
-          continue;
-        case 24:
-          handler.unsetCursorUnderline();
-          continue;
-        case 25:
-          handler.unsetCursorBlink();
-          continue;
-        case 27:
-          handler.unsetCursorInverse();
-          continue;
-        case 28:
-          handler.unsetCursorInvisible();
-          continue;
-        case 29:
-          handler.unsetCursorStrikethrough();
-          continue;
-
-        case 30:
-          handler.setForegroundColor16(NamedColor.black);
-          continue;
-        case 31:
-          handler.setForegroundColor16(NamedColor.red);
-          continue;
-        case 32:
-          handler.setForegroundColor16(NamedColor.green);
-          continue;
-        case 33:
-          handler.setForegroundColor16(NamedColor.yellow);
-          continue;
-        case 34:
-          handler.setForegroundColor16(NamedColor.blue);
-          continue;
-        case 35:
-          handler.setForegroundColor16(NamedColor.magenta);
-          continue;
-        case 36:
-          handler.setForegroundColor16(NamedColor.cyan);
-          continue;
-        case 37:
-          handler.setForegroundColor16(NamedColor.white);
-          continue;
-        case 38:
-          final mode = params[i + 1];
-          switch (mode) {
-            case 2:
-              final r = params[i + 2];
-              final g = params[i + 3];
-              final b = params[i + 4];
-              handler.setForegroundColorRgb(r, g, b);
-              i += 4;
-              break;
-            case 5:
-              final index = params[i + 2];
-              handler.setForegroundColor256(index);
-              i += 2;
-              break;
-          }
-          continue;
-        case 39:
-          handler.resetForeground();
-          continue;
-
-        case 40:
-          handler.setBackgroundColor16(NamedColor.black);
-          continue;
-        case 41:
-          handler.setBackgroundColor16(NamedColor.red);
-          continue;
-        case 42:
-          handler.setBackgroundColor16(NamedColor.green);
-          continue;
-        case 43:
-          handler.setBackgroundColor16(NamedColor.yellow);
-          continue;
-        case 44:
-          handler.setBackgroundColor16(NamedColor.blue);
-          continue;
-        case 45:
-          handler.setBackgroundColor16(NamedColor.magenta);
-          continue;
-        case 46:
-          handler.setBackgroundColor16(NamedColor.cyan);
-          continue;
-        case 47:
-          handler.setBackgroundColor16(NamedColor.white);
-          continue;
-        case 48:
-          final mode = params[i + 1];
-          switch (mode) {
-            case 2:
-              final r = params[i + 2];
-              final g = params[i + 3];
-              final b = params[i + 4];
-              handler.setBackgroundColorRgb(r, g, b);
-              i += 4;
-              break;
-            case 5:
-              final index = params[i + 2];
-              handler.setBackgroundColor256(index);
-              i += 2;
-              break;
-          }
-          continue;
-        case 49:
-          handler.resetBackground();
-          continue;
-
-        case 90:
-          handler.setForegroundColor16(NamedColor.brightBlack);
-          continue;
-        case 91:
-          handler.setForegroundColor16(NamedColor.brightRed);
-          continue;
-        case 92:
-          handler.setForegroundColor16(NamedColor.brightGreen);
-          continue;
-        case 93:
-          handler.setForegroundColor16(NamedColor.brightYellow);
-          continue;
-        case 94:
-          handler.setForegroundColor16(NamedColor.brightBlue);
-          continue;
-        case 95:
-          handler.setForegroundColor16(NamedColor.brightMagenta);
-          continue;
-        case 96:
-          handler.setForegroundColor16(NamedColor.brightCyan);
-          continue;
-        case 97:
-          handler.setForegroundColor16(NamedColor.brightWhite);
-          continue;
-
-        case 100:
-          handler.setBackgroundColor16(NamedColor.brightBlack);
-          continue;
-        case 101:
-          handler.setBackgroundColor16(NamedColor.brightRed);
-          continue;
-        case 102:
-          handler.setBackgroundColor16(NamedColor.brightGreen);
-          continue;
-        case 103:
-          handler.setBackgroundColor16(NamedColor.brightYellow);
-          continue;
-        case 104:
-          handler.setBackgroundColor16(NamedColor.brightBlue);
-          continue;
-        case 105:
-          handler.setBackgroundColor16(NamedColor.brightMagenta);
-          continue;
-        case 106:
-          handler.setBackgroundColor16(NamedColor.brightCyan);
-          continue;
-        case 107:
-          handler.setBackgroundColor16(NamedColor.brightWhite);
-          continue;
-
-        default:
-          handler.unsupportedStyle(param);
-          continue;
+      if (nextIndex != null) {
+        i = nextIndex;
+        continue;
       }
+
+      handler.unsupportedStyle(param);
+    }
+  }
+
+  int? _handleBasicStyles(int param, int index) {
+    switch (param) {
+      case 0:
+        handler.resetCursorStyle();
+      case 1:
+        handler.setCursorBold();
+      case 2:
+        handler.setCursorFaint();
+      case 3:
+        handler.setCursorItalic();
+      case 4:
+        if (_isColonSubParam(index, 0)) {
+          handler.unsetCursorUnderline();
+        } else {
+          handler.setCursorUnderline();
+        }
+        return _skipColonSubParams(index);
+      case 5:
+      case 6:
+        handler.setCursorBlink();
+      case 7:
+        handler.setCursorInverse();
+      case 8:
+        handler.setCursorInvisible();
+      case 9:
+        handler.setCursorStrikethrough();
+      case 21:
+        handler.setCursorUnderline();
+      case 22:
+        handler.unsetCursorBold();
+        handler.unsetCursorFaint();
+      case 23:
+        handler.unsetCursorItalic();
+      case 24:
+        handler.unsetCursorUnderline();
+      case 25:
+        handler.unsetCursorBlink();
+      case 27:
+        handler.unsetCursorInverse();
+      case 28:
+        handler.unsetCursorInvisible();
+      case 29:
+        handler.unsetCursorStrikethrough();
+      case 53:
+        handler.setCursorOverline();
+      case 55:
+        handler.unsetCursorOverline();
+      default:
+        return null;
+    }
+    return index;
+  }
+
+  int? _handleForegroundColor(List<int> params, int index) {
+    switch (params[index]) {
+      case 30:
+        handler.setForegroundColor16(NamedColor.black);
+      case 31:
+        handler.setForegroundColor16(NamedColor.red);
+      case 32:
+        handler.setForegroundColor16(NamedColor.green);
+      case 33:
+        handler.setForegroundColor16(NamedColor.yellow);
+      case 34:
+        handler.setForegroundColor16(NamedColor.blue);
+      case 35:
+        handler.setForegroundColor16(NamedColor.magenta);
+      case 36:
+        handler.setForegroundColor16(NamedColor.cyan);
+      case 37:
+        handler.setForegroundColor16(NamedColor.white);
+      case 38:
+        return _handleForegroundExtendedColor(params, index);
+      case 39:
+        handler.resetForeground();
+      case 90:
+        handler.setForegroundColor16(NamedColor.brightBlack);
+      case 91:
+        handler.setForegroundColor16(NamedColor.brightRed);
+      case 92:
+        handler.setForegroundColor16(NamedColor.brightGreen);
+      case 93:
+        handler.setForegroundColor16(NamedColor.brightYellow);
+      case 94:
+        handler.setForegroundColor16(NamedColor.brightBlue);
+      case 95:
+        handler.setForegroundColor16(NamedColor.brightMagenta);
+      case 96:
+        handler.setForegroundColor16(NamedColor.brightCyan);
+      case 97:
+        handler.setForegroundColor16(NamedColor.brightWhite);
+      default:
+        return null;
+    }
+    return index;
+  }
+
+  int _handleForegroundExtendedColor(List<int> params, int index) {
+    if (index + 1 >= params.length) return index;
+
+    switch (params[index + 1]) {
+      case 2:
+        final nextIndex = _readRgbColor(
+          params,
+          index,
+          handler.setForegroundColorRgb,
+        );
+        return nextIndex;
+      case 5:
+        if (index + 2 >= params.length) return index + 1;
+        handler.setForegroundColor256(params[index + 2]);
+        return index + 2;
+      default:
+        return index + 1;
+    }
+  }
+
+  int? _handleBackgroundColor(List<int> params, int index) {
+    switch (params[index]) {
+      case 40:
+        handler.setBackgroundColor16(NamedColor.black);
+      case 41:
+        handler.setBackgroundColor16(NamedColor.red);
+      case 42:
+        handler.setBackgroundColor16(NamedColor.green);
+      case 43:
+        handler.setBackgroundColor16(NamedColor.yellow);
+      case 44:
+        handler.setBackgroundColor16(NamedColor.blue);
+      case 45:
+        handler.setBackgroundColor16(NamedColor.magenta);
+      case 46:
+        handler.setBackgroundColor16(NamedColor.cyan);
+      case 47:
+        handler.setBackgroundColor16(NamedColor.white);
+      case 48:
+        return _handleBackgroundExtendedColor(params, index);
+      case 49:
+        handler.resetBackground();
+      case 100:
+        handler.setBackgroundColor16(NamedColor.brightBlack);
+      case 101:
+        handler.setBackgroundColor16(NamedColor.brightRed);
+      case 102:
+        handler.setBackgroundColor16(NamedColor.brightGreen);
+      case 103:
+        handler.setBackgroundColor16(NamedColor.brightYellow);
+      case 104:
+        handler.setBackgroundColor16(NamedColor.brightBlue);
+      case 105:
+        handler.setBackgroundColor16(NamedColor.brightMagenta);
+      case 106:
+        handler.setBackgroundColor16(NamedColor.brightCyan);
+      case 107:
+        handler.setBackgroundColor16(NamedColor.brightWhite);
+      default:
+        return null;
+    }
+    return index;
+  }
+
+  int _handleBackgroundExtendedColor(List<int> params, int index) {
+    if (index + 1 >= params.length) return index;
+
+    switch (params[index + 1]) {
+      case 2:
+        final nextIndex = _readRgbColor(
+          params,
+          index,
+          handler.setBackgroundColorRgb,
+        );
+        return nextIndex;
+      case 5:
+        if (index + 2 >= params.length) return index + 1;
+        handler.setBackgroundColor256(params[index + 2]);
+        return index + 2;
+      default:
+        return index + 1;
+    }
+  }
+
+  int _readRgbColor(
+    List<int> params,
+    int index,
+    void Function(int r, int g, int b) setColor,
+  ) {
+    if (_hasColonColorSpace(index)) {
+      setColor(params[index + 3], params[index + 4], params[index + 5]);
+      return index + 5;
+    }
+    if (index + 4 >= params.length) return params.length;
+
+    setColor(params[index + 2], params[index + 3], params[index + 4]);
+    return index + 4;
+  }
+
+  int? _skipExtendedColorIfNeeded(int param, int index) {
+    switch (param) {
+      case 58:
+        return _skipUnsupportedExtendedColor(index);
+      case 59:
+        return index;
+      default:
+        return null;
     }
   }
 
@@ -637,13 +882,42 @@ class EscapeParser {
   ///
   /// https://terminalguide.namepad.de/seq/csi_sn/
   void _csiHandleDeviceStatusReport() {
-    if (_csi.params.isEmpty) return;
+    if (_csi.params.length != 1) return;
 
     switch (_csi.params[0]) {
       case 5:
-        return handler.sendOperatingStatus();
+        if (_csi.prefix == null) {
+          return handler.sendOperatingStatus();
+        }
+        return;
       case 6:
-        return handler.sendCursorPosition();
+        if (_csi.prefix == Ascii.questionMark) {
+          return handler.sendExtendedCursorPosition();
+        }
+        if (_csi.prefix == null) {
+          return handler.sendCursorPosition();
+        }
+        return;
+    }
+  }
+
+  /// `ESC [ Ps SP q` Set Cursor Style (DECSCUSR)
+  void _csiHandleSetCursorShape() {
+    if (_csi.intermediates.length == 1 &&
+        _csi.intermediates[0] == Ascii.space) {
+      handler.setCursorShape(_paramOrDefault(0, 0));
+    } else {
+      handler.unknownCSI(_csi.finalByte);
+    }
+  }
+
+  /// `ESC [ ! p` Soft Terminal Reset (DECSTR)
+  void _csiHandleSoftReset() {
+    if (_csi.intermediates.length == 1 &&
+        _csi.intermediates[0] == Ascii.exclamationMark) {
+      handler.softResetTerminal();
+    } else {
+      handler.unknownCSI(_csi.finalByte);
     }
   }
 
@@ -657,14 +931,24 @@ class EscapeParser {
     if (_csi.params.length > 2) return;
 
     if (_csi.params.isNotEmpty) {
-      top = _csi.params[0];
+      top = _paramOrDefault(0, 1);
 
-      if (_csi.params.length == 2) {
+      if (_csi.params.length == 2 && _csi.params[1] != 0) {
         bottom = _csi.params[1] - 1;
       }
     }
 
     handler.setMargins(top - 1, bottom);
+  }
+
+  /// `ESC [ s` Save Cursor (SCOSC)
+  void _csiHandleSaveCursor() {
+    handler.saveCursor();
+  }
+
+  /// `ESC [ u` Restore Cursor (SCORC)
+  void _csiHandleRestoreCursor() {
+    handler.restoreCursor();
   }
 
   /// `ESC [ Ps t` Window operations [DISPATCH]
@@ -818,13 +1102,30 @@ class EscapeParser {
     handler.setCursorX(x - 1);
   }
 
+  /// `ESC [ Ps I` Cursor Forward Tabulation (CHT)
+  ///
+  /// Moves the cursor to the next tab stop [amount] times.
+  void _csiHandleCursorForwardTab() {
+    final amount = _paramOrDefault(0, 1);
+    for (var i = 0; i < amount; i++) {
+      handler.tab();
+    }
+  }
+
+  /// `ESC [ Ps Z` Cursor Backward Tabulation (CBT)
+  ///
+  /// Moves the cursor to the previous tab stop [amount] times.
+  void _csiHandleCursorBackwardTab() {
+    handler.backTab(_paramOrDefault(0, 1));
+  }
+
   /// ESC [ Ps J Erase Display [Dispatch] (ED)
   ///
   /// https://terminalguide.namepad.de/seq/csi_cj/
   void _csiHandleEraseDisplay() {
     var cmd = 0;
 
-    if (_csi.params.length == 1) {
+    if (_csi.params.isNotEmpty) {
       cmd = _csi.params[0];
     }
 
@@ -846,7 +1147,7 @@ class EscapeParser {
   void _csiHandleEraseLine() {
     var cmd = 0;
 
-    if (_csi.params.length == 1) {
+    if (_csi.params.isNotEmpty) {
       cmd = _csi.params[0];
     }
 
@@ -866,9 +1167,7 @@ class EscapeParser {
   void _csiHandleInsertLines() {
     var amount = 1;
 
-    if (_csi.params.isNotEmpty) {
-      amount = _csi.params[0];
-    }
+    amount = _paramOrDefault(0, amount);
 
     handler.insertLines(amount);
   }
@@ -879,9 +1178,7 @@ class EscapeParser {
   void _csiHandleDeleteLines() {
     var amount = 1;
 
-    if (_csi.params.isNotEmpty) {
-      amount = _csi.params[0];
-    }
+    amount = _paramOrDefault(0, amount);
 
     handler.deleteLines(amount);
   }
@@ -892,9 +1189,7 @@ class EscapeParser {
   void _csiHandleDelete() {
     var amount = 1;
 
-    if (_csi.params.isNotEmpty) {
-      amount = _csi.params[0];
-    }
+    amount = _paramOrDefault(0, amount);
 
     handler.deleteChars(amount);
   }
@@ -905,9 +1200,7 @@ class EscapeParser {
   void _csiHandleScrollUp() {
     var amount = 1;
 
-    if (_csi.params.isNotEmpty) {
-      amount = _csi.params[0];
-    }
+    amount = _paramOrDefault(0, amount);
 
     handler.scrollUp(amount);
   }
@@ -916,11 +1209,14 @@ class EscapeParser {
   ///
   /// https://terminalguide.namepad.de/seq/csi_ct_1param/
   void _csiHandleScrollDown() {
+    if (_csi.params.length > 1) {
+      handler.unknownCSI(_csi.finalByte);
+      return;
+    }
+
     var amount = 1;
 
-    if (_csi.params.isNotEmpty) {
-      amount = _csi.params[0];
-    }
+    amount = _paramOrDefault(0, amount);
 
     handler.scrollDown(amount);
   }
@@ -931,9 +1227,7 @@ class EscapeParser {
   void _csiHandleEraseCharacters() {
     var amount = 1;
 
-    if (_csi.params.isNotEmpty) {
-      amount = _csi.params[0];
-    }
+    amount = _paramOrDefault(0, amount);
 
     handler.eraseChars(amount);
   }
@@ -948,11 +1242,63 @@ class EscapeParser {
   void _csiHandleInsertBlankCharacters() {
     var amount = 1;
 
-    if (_csi.params.isNotEmpty) {
-      amount = _csi.params[0];
-    }
+    amount = _paramOrDefault(0, amount);
 
     handler.insertBlankChars(amount);
+  }
+
+  bool _hasColonColorSpace(int index) {
+    return index + 5 < _csi.params.length &&
+        index + 4 < _csi.separators.length &&
+        _csi.separators[index] == Ascii.colon &&
+        _csi.separators[index + 1] == Ascii.colon &&
+        _csi.separators[index + 2] == Ascii.colon &&
+        _csi.separators[index + 3] == Ascii.colon &&
+        _csi.separators[index + 4] == Ascii.colon;
+  }
+
+  int _skipUnsupportedExtendedColor(int index) {
+    if (index + 1 >= _csi.params.length) {
+      return index;
+    }
+
+    switch (_csi.params[index + 1]) {
+      case 2:
+        if (_hasColonColorSpace(index)) {
+          return index + 5;
+        }
+        if (index + 4 < _csi.params.length) {
+          return index + 4;
+        }
+        return _csi.params.length;
+      case 5:
+        final end = index + 2;
+        return end < _csi.params.length ? end : _csi.params.length;
+      default:
+        return index + 1;
+    }
+  }
+
+  int _skipColonSubParams(int index) {
+    while (index < _csi.separators.length &&
+        _csi.separators[index] == Ascii.colon) {
+      index++;
+    }
+    return index;
+  }
+
+  bool _isColonSubParam(int index, int value) {
+    return index < _csi.separators.length &&
+        _csi.separators[index] == Ascii.colon &&
+        index + 1 < _csi.params.length &&
+        _csi.params[index + 1] == value;
+  }
+
+  int _paramOrDefault(int index, int defaultValue) {
+    if (index >= _csi.params.length || _csi.params[index] == 0) {
+      return defaultValue;
+    }
+    return _csi.params[index];
   }
 
   void _setMode(int mode, bool enabled) {
@@ -998,7 +1344,6 @@ class EscapeParser {
       case 66:
         return handler.setAppKeypadMode(enabled);
       case 1000:
-      case 10061000:
         return enabled
             ? handler.setMouseMode(MouseMode.upDownScroll)
             : handler.setMouseMode(MouseMode.none);
@@ -1051,6 +1396,7 @@ class EscapeParser {
           handler.useAltBuffer();
         } else {
           handler.useMainBuffer();
+          handler.restoreCursor();
         }
         return;
       case 2004:
@@ -1068,14 +1414,14 @@ class EscapeParser {
       return false;
     }
 
-    if (_osc.isEmpty) {
+    if (_osc.isEmpty || (_osc.length == 1 && _osc[0].isEmpty)) {
       return true;
     }
 
     // Common OSCs
     if (_osc.length >= 2) {
       final ps = _osc[0];
-      final pt = _osc[1];
+      final pt = _osc.sublist(1).join(';');
 
       switch (ps) {
         case '0':
@@ -1099,6 +1445,36 @@ class EscapeParser {
 
   final _osc = <String>[];
 
+  bool _consumeStringControl() {
+    while (true) {
+      if (_queue.isEmpty) {
+        return false;
+      }
+
+      final char = _queue.consume();
+      if (_isCancelControl(char)) {
+        return true;
+      }
+      if (char == _c1StringTerminator) {
+        return true;
+      }
+
+      if (char == Ascii.ESC) {
+        if (_queue.isEmpty) {
+          return false;
+        }
+        final next = _queue.peek();
+        if (_isCancelControl(next)) {
+          return true;
+        }
+        if (next == Ascii.backslash) {
+          _queue.consume();
+          return true;
+        }
+      }
+    }
+  }
+
   bool _consumeOsc() {
     _osc.clear();
     final param = StringBuffer();
@@ -1110,8 +1486,13 @@ class EscapeParser {
 
       final char = _queue.consume();
 
-      // OSC terminates with BEL
-      if (char == Ascii.BEL) {
+      if (_isCancelControl(char)) {
+        _osc.clear();
+        return true;
+      }
+
+      // OSC terminates with BEL or 8-bit ST.
+      if (char == Ascii.BEL || char == _c1StringTerminator) {
         _osc.add(param.toString());
         return true;
       }
@@ -1122,11 +1503,15 @@ class EscapeParser {
           return false;
         }
 
-        if (_queue.consume() == Ascii.backslash) {
+        final next = _queue.consume();
+        if (next == Ascii.backslash) {
           _osc.add(param.toString());
+          return true;
         }
 
-        return true;
+        param.writeCharCode(char);
+        param.writeCharCode(next);
+        continue;
       }
 
       /// Parse next parameter
@@ -1144,16 +1529,21 @@ class EscapeParser {
 class _Csi {
   _Csi({
     required this.params,
+    required this.separators,
+    required this.intermediates,
     required this.finalByte,
-    // required this.intermediates,
   });
 
   int? prefix;
 
   List<int> params;
 
+  /// Separators between adjacent [params]. Each entry is either `;` or `:`.
+  List<int> separators;
+
+  final List<int> intermediates;
+
   int finalByte;
-  // final List<int> intermediates;
 
   @override
   String toString() {
@@ -1163,6 +1553,37 @@ class _Csi {
 
 /// Function that handles a sequence of characters that starts with an escape.
 /// Returns [true] if the sequence was processed, [false] if it was not.
+const _escapeSequenceCanceled = -1;
+
+const _c1Index = 0x84;
+const _c1SingleShift2 = 0x8e;
+const _c1SingleShift3 = 0x8f;
+const _c1NextLine = 0x85;
+const _c1HorizontalTabSet = 0x88;
+const _c1ReverseIndex = 0x8d;
+const _c1DeviceControlString = 0x90;
+const _c1StartOfString = 0x98;
+const _c1ControlSequenceIntroducer = 0x9b;
+const _c1StringTerminator = 0x9c;
+const _c1OperatingSystemCommand = 0x9d;
+const _c1PrivacyMessage = 0x9e;
+const _c1ApplicationProgramCommand = 0x9f;
+
+bool _isCancelControl(int char) {
+  return char == Ascii.CAN || char == Ascii.SUB;
+}
+
+bool _isC1Control(int char) {
+  return char >= 0x80 && char <= 0x9f;
+}
+
+bool _isC1StringControl(int char) {
+  return char == _c1DeviceControlString ||
+      char == _c1StartOfString ||
+      char == _c1PrivacyMessage ||
+      char == _c1ApplicationProgramCommand;
+}
+
 typedef _EscHandler = bool Function();
 
 typedef _SbcHandler = void Function();

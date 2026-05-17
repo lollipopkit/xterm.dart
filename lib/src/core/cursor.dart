@@ -43,6 +43,10 @@ class CursorStyle {
     attrs |= CellAttr.strikethrough;
   }
 
+  void setOverline() {
+    attrs |= CellAttr.overline;
+  }
+
   void unsetBold() {
     attrs &= ~CellAttr.bold;
   }
@@ -75,11 +79,18 @@ class CursorStyle {
     attrs &= ~CellAttr.strikethrough;
   }
 
+  void unsetOverline() {
+    attrs &= ~CellAttr.overline;
+  }
+
   bool get isBold => (attrs & CellAttr.bold) != 0;
 
   bool get isFaint => (attrs & CellAttr.faint) != 0;
 
-  bool get isItalis => (attrs & CellAttr.italic) != 0;
+  bool get isItalic => (attrs & CellAttr.italic) != 0;
+
+  @Deprecated('Use isItalic instead')
+  bool get isItalis => isItalic;
 
   bool get isUnderline => (attrs & CellAttr.underline) != 0;
 
@@ -89,15 +100,22 @@ class CursorStyle {
 
   bool get isInvisible => (attrs & CellAttr.invisible) != 0;
 
+  bool get isOverline => (attrs & CellAttr.overline) != 0;
+
+  bool get isStrikethrough => (attrs & CellAttr.strikethrough) != 0;
+
   void setForegroundColor16(int color) {
     foreground = color | CellColor.named;
   }
 
   void setForegroundColor256(int color) {
-    foreground = color | CellColor.palette;
+    foreground = _clampColor(color) | CellColor.palette;
   }
 
   void setForegroundColorRgb(int r, int g, int b) {
+    r = _clampColor(r);
+    g = _clampColor(g);
+    b = _clampColor(b);
     foreground = (r << 16) | (g << 8) | b | CellColor.rgb;
   }
 
@@ -110,10 +128,13 @@ class CursorStyle {
   }
 
   void setBackgroundColor256(int color) {
-    background = color | CellColor.palette;
+    background = _clampColor(color) | CellColor.palette;
   }
 
   void setBackgroundColorRgb(int r, int g, int b) {
+    r = _clampColor(r);
+    g = _clampColor(g);
+    b = _clampColor(b);
     background = (r << 16) | (g << 8) | b | CellColor.rgb;
   }
 
@@ -125,6 +146,10 @@ class CursorStyle {
     foreground = 0;
     background = 0;
     attrs = 0;
+  }
+
+  int _clampColor(int value) {
+    return value.clamp(0, 255).toInt();
   }
 }
 

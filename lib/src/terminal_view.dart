@@ -4,12 +4,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:xterm/src/core/buffer/cell_offset.dart';
+import 'package:xterm/src/core/cursor_type.dart';
 import 'package:xterm/src/core/input/keys.dart';
 import 'package:xterm/src/core/mouse/button.dart';
 import 'package:xterm/src/core/mouse/button_state.dart';
 import 'package:xterm/src/terminal.dart';
 import 'package:xterm/src/ui/controller.dart';
-import 'package:xterm/src/ui/cursor_type.dart';
 import 'package:xterm/src/ui/custom_text_edit.dart';
 import 'package:xterm/src/ui/gesture/gesture_handler.dart';
 import 'package:xterm/src/ui/input_map.dart';
@@ -224,6 +224,7 @@ class TerminalViewState extends State<TerminalView>
     _shortcutManager = ShortcutManager(
       shortcuts: widget.shortcuts ?? defaultTerminalShortcuts,
     );
+    widget.terminal.addListener(_handleTerminalChange);
     super.initState();
     _updateCursorBlink(scheduleSetState: false);
   }
@@ -237,6 +238,11 @@ class TerminalViewState extends State<TerminalView>
       }
       _focusNode = widget.focusNode ?? FocusNode();
       _focusNode.addListener(_handleFocusChange);
+      _updateCursorBlink(resetVisible: true);
+    }
+    if (oldWidget.terminal != widget.terminal) {
+      oldWidget.terminal.removeListener(_handleTerminalChange);
+      widget.terminal.addListener(_handleTerminalChange);
       _updateCursorBlink(resetVisible: true);
     }
     if (oldWidget.controller != widget.controller) {
@@ -265,6 +271,7 @@ class TerminalViewState extends State<TerminalView>
 
   @override
   void dispose() {
+    widget.terminal.removeListener(_handleTerminalChange);
     _focusNode.removeListener(_handleFocusChange);
     if (widget.focusNode == null) {
       _focusNode.dispose();
@@ -308,9 +315,12 @@ class TerminalViewState extends State<TerminalView>
                         offset: offset,
                         padding: MediaQuery.of(context).padding,
                         autoResize: widget.autoResize,
-                        textStyle: widget.textStyle.copyWith(fontSize: textSize),
+                        textStyle: widget.textStyle.copyWith(
+                          fontSize: textSize,
+                        ),
                         textScaler:
-                            widget.textScaler ?? MediaQuery.textScalerOf(context),
+                            widget.textScaler ??
+                            MediaQuery.textScalerOf(context),
                         theme: widget.theme,
                         focusNode: _focusNode,
                         cursorType: widget.cursorType,
@@ -472,12 +482,19 @@ class TerminalViewState extends State<TerminalView>
   }
 
   bool get _cursorBlinkEnabled {
-    return widget.cursorBlink &&
+    return (widget.cursorBlink || widget.terminal.cursorBlinkMode) &&
         _focusNode.hasFocus &&
         !widget.alwaysShowCursor;
   }
 
+  void _handleTerminalChange() {
+    if (_cursorBlinkEnabled != _previousBlinkEnabled) {
+      _updateCursorBlink(resetVisible: true);
+    }
+  }
+
   void _handleFocusChange() {
+    widget.terminal.focusInput(_focusNode.hasFocus);
     _updateCursorBlink(resetVisible: true);
   }
 
