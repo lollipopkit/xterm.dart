@@ -121,6 +121,23 @@ void main() {
     controller.dispose();
   });
 
+  test('TerminalController.clearSelection handles shared anchor', () {
+    final terminal = Terminal();
+    terminal.write('abcdef');
+
+    const vsync = TestVSync();
+    final controller = TerminalController(vsync: vsync);
+    final anchor = terminal.buffer.createAnchor(2, 0);
+
+    controller.setSelection(anchor, anchor);
+    controller.clearSelection();
+
+    expect(anchor.line, isNull);
+    expect(controller.selection, isNull);
+
+    controller.dispose();
+  });
+
   test(
     'TerminalController.dispose detaches selection and highlight anchors',
     () {
@@ -151,6 +168,36 @@ void main() {
       expect(selectionExtent.line, isNull);
       expect(highlightStart.line, isNull);
       expect(highlightEnd.line, isNull);
+      expect(highlight.disposed, isTrue);
+    },
+  );
+
+  test(
+    'TerminalController.dispose handles shared selection and highlight anchors',
+    () {
+      final terminal = Terminal();
+      terminal.write('abcdef');
+
+      const vsync = TestVSync();
+      final controller = TerminalController(
+        vsync: vsync,
+        pointerInputs: const PointerInputs({}),
+      );
+
+      final selectionAnchor = terminal.buffer.createAnchor(1, 0);
+      final highlightAnchor = terminal.buffer.createAnchor(3, 0);
+
+      controller.setSelection(selectionAnchor, selectionAnchor);
+      final highlight = controller.highlight(
+        p1: highlightAnchor,
+        p2: highlightAnchor,
+        color: const Color(0xFFFF0000),
+      );
+
+      controller.dispose();
+
+      expect(selectionAnchor.line, isNull);
+      expect(highlightAnchor.line, isNull);
       expect(highlight.disposed, isTrue);
     },
   );

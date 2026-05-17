@@ -249,10 +249,7 @@ class TerminalController with ChangeNotifier {
     _selectionAnimation?.dispose();
     _selectionAnimation = null;
 
-    _selectionBase?.dispose();
-    _selectionBase = null;
-    _selectionExtent?.dispose();
-    _selectionExtent = null;
+    _disposeSelectionAnchors();
 
     _lastSelectionBegin = null;
     _lastSelectionEnd = null;
@@ -304,10 +301,7 @@ class TerminalController with ChangeNotifier {
     _selectionAnimation?.dispose();
     _selectionAnimation = null;
 
-    _selectionBase?.dispose();
-    _selectionBase = null;
-    _selectionExtent?.dispose();
-    _selectionExtent = null;
+    _disposeSelectionAnchors();
 
     for (final highlight in _highlights.toList()) {
       highlight.dispose();
@@ -315,6 +309,19 @@ class TerminalController with ChangeNotifier {
     _highlights.clear();
 
     super.dispose();
+  }
+
+  void _disposeSelectionAnchors() {
+    final base = _selectionBase;
+    final extent = _selectionExtent;
+
+    base?.dispose();
+    if (extent != null && !identical(extent, base)) {
+      extent.dispose();
+    }
+
+    _selectionBase = null;
+    _selectionExtent = null;
   }
 }
 
@@ -345,7 +352,9 @@ class TerminalHighlight with Disposable {
     }
 
     p1.dispose();
-    p2.dispose();
+    if (!identical(p2, p1)) {
+      p2.dispose();
+    }
     super.dispose();
   }
 }
