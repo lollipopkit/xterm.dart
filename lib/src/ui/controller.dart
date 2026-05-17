@@ -37,13 +37,13 @@ class TerminalController with ChangeNotifier {
     SelectionMode selectionMode = SelectionMode.line,
     PointerInputs pointerInputs = const PointerInputs({PointerInput.tap}),
     bool suspendPointerInput = false,
-    required TickerProvider vsync,
+    TickerProvider? vsync,
   }) : _selectionMode = selectionMode,
        _pointerInputs = pointerInputs,
        _suspendPointerInputs = suspendPointerInput,
        _vsync = vsync;
 
-  final TickerProvider _vsync;
+  final TickerProvider? _vsync;
 
   CellAnchor? _selectionBase;
   CellAnchor? _selectionExtent;
@@ -133,17 +133,22 @@ class TerminalController with ChangeNotifier {
     notifyListeners();
   }
 
-  SelectionAnimation _createSelectionAnimation({
+  SelectionAnimation? _createSelectionAnimation({
     required SelectionAnimationType type,
     CellOffset? oldBegin,
     CellOffset? oldEnd,
     required CellOffset newBegin,
     required CellOffset newEnd,
   }) {
+    final vsync = _vsync;
+    if (vsync == null) {
+      return null;
+    }
+
     final duration = type == SelectionAnimationType.insert
         ? const Duration(milliseconds: 100)
         : const Duration(milliseconds: 150);
-    final controller = _createAndWireSelectionController(duration);
+    final controller = _createAndWireSelectionController(duration, vsync);
     final (
       :scaleAnimation,
       :positionAnimation,
@@ -205,8 +210,11 @@ class TerminalController with ChangeNotifier {
     );
   }
 
-  AnimationController _createAndWireSelectionController(Duration duration) {
-    final controller = AnimationController(duration: duration, vsync: _vsync);
+  AnimationController _createAndWireSelectionController(
+    Duration duration,
+    TickerProvider vsync,
+  ) {
+    final controller = AnimationController(duration: duration, vsync: vsync);
 
     controller.addStatusListener((status) {
       if (status == AnimationStatus.completed) {

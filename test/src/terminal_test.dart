@@ -1,6 +1,5 @@
 import 'package:test/test.dart';
 import 'package:xterm/core.dart';
-import 'package:xterm/ui.dart';
 
 void main() {
   group('Terminal.write', () {
@@ -427,6 +426,7 @@ void main() {
 
       terminal.write('\x1b[ q');
       expect(terminal.cursorTypeOverride, isNull);
+      expect(terminal.cursorBlinkMode, isFalse);
     });
   });
 

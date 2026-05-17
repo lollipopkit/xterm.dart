@@ -96,6 +96,22 @@ void main() {
     controller.dispose();
   });
 
+  test('TerminalController.setSelection works without vsync', () {
+    final terminal = Terminal();
+    terminal.write('abcdef');
+
+    final controller = TerminalController();
+    final base = terminal.buffer.createAnchor(0, 0);
+    final extent = terminal.buffer.createAnchor(2, 0);
+
+    controller.setSelection(base, extent);
+
+    expect(controller.selection, isNotNull);
+    expect(controller.selectionAnimation, isNull);
+
+    controller.dispose();
+  });
+
   test('TerminalController.setSelection ignores detached anchors', () {
     final terminal = Terminal();
     terminal.write('abcdef');

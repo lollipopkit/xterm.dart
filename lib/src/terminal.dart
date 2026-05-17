@@ -911,6 +911,7 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
     switch (shape) {
       case 0:
         _cursorTypeOverride = null;
+        _cursorBlinkMode = false;
         return;
       case 1:
       case 2:
