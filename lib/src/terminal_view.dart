@@ -7,6 +7,7 @@ import 'package:xterm/src/core/buffer/cell_offset.dart';
 import 'package:xterm/src/core/input/keys.dart';
 import 'package:xterm/src/core/mouse/button.dart';
 import 'package:xterm/src/core/mouse/button_state.dart';
+import 'package:xterm/src/core/mouse/mode.dart';
 import 'package:xterm/src/terminal.dart';
 import 'package:xterm/src/ui/controller.dart';
 import 'package:xterm/src/ui/cursor_type.dart';
@@ -190,6 +191,9 @@ class TerminalView extends StatefulWidget {
 
 class TerminalViewState extends State<TerminalView>
     with TickerProviderStateMixin {
+  var _prevIsAltBuffer = false;
+  var _prevMouseMode = MouseMode.none;
+
   late FocusNode _focusNode;
 
   late final ShortcutManager _shortcutManager;
@@ -224,6 +228,9 @@ class TerminalViewState extends State<TerminalView>
     _shortcutManager = ShortcutManager(
       shortcuts: widget.shortcuts ?? defaultTerminalShortcuts,
     );
+    widget.terminal.addListener(_onTerminalStateChanged);
+    _prevIsAltBuffer = widget.terminal.isUsingAltBuffer;
+    _prevMouseMode = widget.terminal.mouseMode;
     super.initState();
     _updateCursorBlink(scheduleSetState: false);
   }
@@ -260,6 +267,12 @@ class TerminalViewState extends State<TerminalView>
         oldWidget.alwaysShowCursor != widget.alwaysShowCursor) {
       _updateCursorBlink(resetVisible: true);
     }
+    if (oldWidget.terminal != widget.terminal) {
+      oldWidget.terminal.removeListener(_onTerminalStateChanged);
+      widget.terminal.addListener(_onTerminalStateChanged);
+      _prevIsAltBuffer = widget.terminal.isUsingAltBuffer;
+      _prevMouseMode = widget.terminal.mouseMode;
+    }
     super.didUpdateWidget(oldWidget);
   }
 
@@ -279,8 +292,25 @@ class TerminalViewState extends State<TerminalView>
     textSizeNoti.dispose();
     _cursorBlinkTimer?.cancel();
     _cursorBlinkVisible.dispose();
+    widget.terminal.removeListener(_onTerminalStateChanged);
     _composingText.dispose();
     super.dispose();
+  }
+
+  bool get _shouldSuppressScroll {
+    if (widget.terminal.isUsingAltBuffer) return true;
+    final mode = widget.terminal.mouseMode;
+    return mode != MouseMode.none && mode.reportScroll;
+  }
+
+  void _onTerminalStateChanged() {
+    final isAltBuffer = widget.terminal.isUsingAltBuffer;
+    final mouseMode = widget.terminal.mouseMode;
+    if (_prevIsAltBuffer != isAltBuffer || _prevMouseMode != mouseMode) {
+      _prevIsAltBuffer = isAltBuffer;
+      _prevMouseMode = mouseMode;
+      setState(() {});
+    }
   }
 
   @override
@@ -290,7 +320,9 @@ class TerminalViewState extends State<TerminalView>
       child: Scrollable(
         key: _scrollableKey,
         controller: _scrollController,
-        physics: const ClampingScrollPhysics(),
+        physics: _shouldSuppressScroll
+            ? const NeverScrollableScrollPhysics()
+            : const ClampingScrollPhysics(),
         viewportBuilder: (context, offset) {
           return ValueListenableBuilder(
             valueListenable: textSizeNoti,
