@@ -1,11 +1,20 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/widgets.dart';
 import 'package:xterm/core.dart';
-import 'package:xterm/src/ui/infinite_scroll_view.dart';
 
-/// Handles scrolling gestures in the alternate screen buffer. In alternate
-/// screen buffer, the terminal don't have a scrollback buffer, instead, the
-/// scroll gestures are converted to escape sequences based on the current
-/// report mode declared by the application.
+/// Handles scrolling gestures when the terminal application declares support
+/// for mouse tracking (alt screen buffer or mouse mode with scroll reporting).
+///
+/// When the terminal is in alternate screen buffer, there is no scrollback, so
+/// scroll gestures are converted to escape sequences (mouse wheel events or
+/// arrow key simulation).
+///
+/// When the terminal is in main screen buffer but has enabled mouse scroll
+/// reporting, scroll gestures are forwarded to the application as mouse events
+/// and the inner scrollable is suppressed (via [NeverScrollableScrollPhysics]
+/// in [TerminalView]).
+///
+/// When neither condition is met, normal scrollback scrolling is used.
 class TerminalScrollGestureHandler extends StatefulWidget {
   const TerminalScrollGestureHandler({
     super.key,
@@ -38,22 +47,29 @@ class TerminalScrollGestureHandler extends StatefulWidget {
 
 class _TerminalScrollGestureHandlerState
     extends State<TerminalScrollGestureHandler> {
-  /// Whether the application is in alternate screen buffer. If false, then this
-  /// widget does nothing.
   var isAltBuffer = false;
-
-  /// The variable that tracks the line offset in last scroll event. Used to
-  /// determine how many the scroll events should be sent to the terminal.
-  var lastLineOffset = 0;
-
-  /// This variable tracks the last offset where the scroll gesture started.
-  /// Used to calculate the cell offset of the terminal mouse event.
   var lastPointerPosition = Offset.zero;
+  var _mouseMode = MouseMode.none;
+  double _accumulatedScroll = 0.0;
+  double? _lastTouchY;
+
+  /// Whether scroll events should be intercepted and forwarded to the terminal
+  /// instead of being handled by the inner scrollable.
+  bool get _shouldForwardScroll {
+    if (widget.terminal.isUsingAltBuffer) return true;
+    final mode = widget.terminal.mouseMode;
+    return mode != MouseMode.none && mode.reportScroll;
+  }
+
+  bool _isTouchPointer(PointerDeviceKind kind) {
+    return kind == PointerDeviceKind.touch || kind == PointerDeviceKind.stylus;
+  }
 
   @override
   void initState() {
     widget.terminal.addListener(_onTerminalUpdated);
     isAltBuffer = widget.terminal.isUsingAltBuffer;
+    _mouseMode = widget.terminal.mouseMode;
     super.initState();
   }
 
@@ -69,65 +85,101 @@ class _TerminalScrollGestureHandlerState
       oldWidget.terminal.removeListener(_onTerminalUpdated);
       widget.terminal.addListener(_onTerminalUpdated);
       isAltBuffer = widget.terminal.isUsingAltBuffer;
+      _mouseMode = widget.terminal.mouseMode;
     }
     super.didUpdateWidget(oldWidget);
   }
 
   void _onTerminalUpdated() {
-    if (isAltBuffer != widget.terminal.isUsingAltBuffer) {
-      isAltBuffer = widget.terminal.isUsingAltBuffer;
+    final newIsAltBuffer = widget.terminal.isUsingAltBuffer;
+    final newMouseMode = widget.terminal.mouseMode;
+    if (isAltBuffer != newIsAltBuffer || _mouseMode != newMouseMode) {
+      isAltBuffer = newIsAltBuffer;
+      _mouseMode = newMouseMode;
+      _accumulatedScroll = 0.0;
+      _lastTouchY = null;
       setState(() {});
     }
   }
 
-  /// Send a single scroll event to the terminal. If [simulateScroll] is true,
-  /// then if the application doesn't recognize mouse wheel events, this method
-  /// will simulate scroll events by sending up/down arrow keys.
-  void _sendScrollEvent(bool up) {
-    final position = widget.getCellOffset(lastPointerPosition);
+  /// Process a raw scroll delta from [PointerScrollEvent], accumulating
+  /// fractional scrolls and dispatching discrete scroll events per line.
+  void _handleScrollDelta(double dy, {bool fromTouch = false}) {
+    _accumulatedScroll += dy;
+    final lineHeight = widget.getLineHeight();
+    if (lineHeight <= 0) return;
 
+    // Use a larger threshold for touch to prevent overly sensitive scrolling
+    final threshold = fromTouch ? lineHeight * 3 : lineHeight;
+    final lines = (_accumulatedScroll.abs() / threshold).floor();
+    if (lines > 0) {
+      final up = _accumulatedScroll < 0;
+      for (var i = 0; i < lines; i++) {
+        _sendScrollEvent(up, fromTouch: fromTouch);
+      }
+      _accumulatedScroll -= (up ? -lines : lines) * threshold;
+    }
+  }
+
+  /// Send a single scroll event to the terminal. The event is first offered to
+  /// terminal mouse reporting. If it is not handled and [simulateScroll] is
+  /// enabled, this falls back to sending
+  /// up/down arrow keys — but only when the application has NOT enabled mouse
+  /// mode (to avoid sending unintended arrow keys to apps expecting mouse
+  /// events).
+  ///
+  /// When [fromTouch] is true (touch drag on mobile), the arrow key fallback
+  /// is disabled to avoid flooding the terminal with key events during
+  /// continuous touch gestures.
+  void _sendScrollEvent(bool up, {bool fromTouch = false}) {
+    final position = widget.getCellOffset(lastPointerPosition);
     final handled = widget.terminal.mouseInput(
       up ? TerminalMouseButton.wheelUp : TerminalMouseButton.wheelDown,
       TerminalMouseButtonState.down,
       position,
     );
 
-    if (!handled && widget.simulateScroll) {
+    if (!handled && !fromTouch && widget.simulateScroll) {
       widget.terminal.keyInput(
         up ? TerminalKey.arrowUp : TerminalKey.arrowDown,
       );
     }
   }
 
-  void _onScroll(double offset) {
-    final currentLineOffset = offset ~/ widget.getLineHeight();
-
-    final delta = currentLineOffset - lastLineOffset;
-
-    for (var i = 0; i < delta.abs(); i++) {
-      _sendScrollEvent(delta < 0);
-    }
-
-    lastLineOffset = currentLineOffset;
-  }
-
   @override
   Widget build(BuildContext context) {
-    if (!isAltBuffer) {
+    if (!_shouldForwardScroll) {
       return widget.child;
     }
 
     return Listener(
       onPointerSignal: (event) {
-        lastPointerPosition = event.position;
+        if (event is PointerScrollEvent) {
+          lastPointerPosition = event.localPosition;
+          _handleScrollDelta(event.scrollDelta.dy);
+        }
       },
       onPointerDown: (event) {
-        lastPointerPosition = event.position;
+        lastPointerPosition = event.localPosition;
+        if (_isTouchPointer(event.kind)) {
+          _lastTouchY = event.position.dy;
+        }
       },
-      child: InfiniteScrollView(
-        onScroll: _onScroll,
-        child: widget.child,
-      ),
+      onPointerMove: (event) {
+        if (_lastTouchY != null && _isTouchPointer(event.kind)) {
+          final dy = _lastTouchY! - event.position.dy;
+          lastPointerPosition = event.localPosition;
+          _handleScrollDelta(dy, fromTouch: true);
+          _lastTouchY = event.position.dy;
+        }
+      },
+      onPointerUp: (event) {
+        _lastTouchY = null;
+      },
+      onPointerCancel: (event) {
+        _lastTouchY = null;
+      },
+      child: widget.child,
     );
   }
 }
