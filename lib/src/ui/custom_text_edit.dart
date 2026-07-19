@@ -496,7 +496,17 @@ class CustomTextEditState extends State<CustomTextEdit>
       }
     } else {
       // Generic insert/delete logic
-      if (currentText.length < previousText.length) {
+      if (!oldValue.composing.isCollapsed &&
+          _currentEditingState.composing.isCollapsed) {
+        // IME composing just ended. The committed text replaces the
+        // composing text entirely, so compute the delta from the
+        // initial (empty) state rather than from the composing text.
+        final String textDelta = currentText.substring(initTextLength);
+        if (textDelta.isNotEmpty) {
+          widget.onInsert(textDelta);
+          textChanged = true;
+        }
+      } else if (currentText.length < previousText.length) {
         // This is a simplification. For robust deletion detection without the
         // deleteDetection trick, a diff algorithm or more context is needed.
         // Assuming any reduction when not composing is a delete.
