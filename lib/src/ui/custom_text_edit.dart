@@ -453,9 +453,9 @@ class CustomTextEditState extends State<CustomTextEdit>
       return;
     }
 
+    final bool wasComposing = !oldValue.composing.isCollapsed;
     // If we were composing and now we are not, notify with null.
-    if (!oldValue.composing.isCollapsed &&
-        _currentEditingState.composing.isCollapsed) {
+    if (wasComposing) {
       widget.onComposing(null);
     }
 
@@ -463,57 +463,18 @@ class CustomTextEditState extends State<CustomTextEdit>
     final String currentText = _currentEditingState.text;
     final int initTextLength = _initEditingState.text.length;
 
-    bool textChanged = false;
-    if (widget.deleteDetection) {
-      // Specific logic for delete detection using initial placeholder characters
-      if (currentText.length < previousText.length &&
-          previousText ==
-              _initEditingState
-                  .text && // Deletion happened from the initial state
-          currentText.startsWith(
-            _initEditingState.text.substring(0, initTextLength - 1),
-          )) {
-        // Check if one char was removed
-        if (!_consumeImeDeleteSuppression()) {
-          widget.onDelete();
-          textChanged = true;
-        }
-      } else if (currentText.length > initTextLength &&
-          currentText.startsWith(_initEditingState.text)) {
-        final String textDelta = currentText.substring(initTextLength);
-        if (textDelta.isNotEmpty) {
-          widget.onInsert(textDelta);
-          textChanged = true;
-        }
-      } else if (currentText.length > previousText.length &&
-          previousText == _initEditingState.text) {
-        // Catch case where init text was empty and then text was added
-        final String textDelta = currentText.substring(initTextLength);
-        if (textDelta.isNotEmpty) {
-          widget.onInsert(textDelta);
-          textChanged = true;
-        }
-      }
-    } else {
-      // Generic insert/delete logic
-      if (currentText.length < previousText.length) {
-        // This is a simplification. For robust deletion detection without the
-        // deleteDetection trick, a diff algorithm or more context is needed.
-        // Assuming any reduction when not composing is a delete.
-        if (!_consumeImeDeleteSuppression()) {
-          widget.onDelete();
-          textChanged = true;
-        }
-      } else if (currentText.length > previousText.length) {
-        // Assumes text is appended. More complex changes (e.g. replacing selection)
-        // are handled by setting textEditingValue directly.
-        final String textDelta = currentText.substring(previousText.length);
-        if (textDelta.isNotEmpty) {
-          widget.onInsert(textDelta);
-          textChanged = true;
-        }
-      }
-    }
+    final bool textChanged = widget.deleteDetection
+        ? _processDeleteDetectionInput(
+            previousText,
+            currentText,
+            initTextLength,
+          )
+        : _processStandardInput(
+            previousText,
+            currentText,
+            initTextLength,
+            wasComposing,
+          );
 
     // Reset editing state to the initial state if composing is done
     // and text was actually processed (either by insert/delete or composing finished).
@@ -524,6 +485,58 @@ class CustomTextEditState extends State<CustomTextEdit>
       _connection?.setEditingState(_currentEditingState);
     }
     _showCaretOnScreen();
+  }
+
+  bool _processDeleteDetectionInput(
+    String previousText,
+    String currentText,
+    int initTextLength,
+  ) {
+    final String initialText = _initEditingState.text;
+    if (currentText.length < previousText.length &&
+        previousText == initialText &&
+        currentText.startsWith(initialText.substring(0, initTextLength - 1))) {
+      if (!_consumeImeDeleteSuppression()) {
+        widget.onDelete();
+        return true;
+      }
+    } else if (currentText.length > initTextLength &&
+        currentText.startsWith(initialText)) {
+      return _insertTextDelta(currentText.substring(initTextLength));
+    } else if (currentText.length > previousText.length &&
+        previousText == initialText) {
+      return _insertTextDelta(currentText.substring(initTextLength));
+    }
+    return false;
+  }
+
+  bool _processStandardInput(
+    String previousText,
+    String currentText,
+    int initTextLength,
+    bool wasComposing,
+  ) {
+    if (wasComposing) {
+      // The committed text replaces the composing text entirely.
+      return _insertTextDelta(currentText.substring(initTextLength));
+    }
+    if (currentText.length < previousText.length) {
+      if (!_consumeImeDeleteSuppression()) {
+        widget.onDelete();
+        return true;
+      }
+    } else if (currentText.length > previousText.length) {
+      return _insertTextDelta(currentText.substring(previousText.length));
+    }
+    return false;
+  }
+
+  bool _insertTextDelta(String textDelta) {
+    if (textDelta.isEmpty) {
+      return false;
+    }
+    widget.onInsert(textDelta);
+    return true;
   }
 
   @override
