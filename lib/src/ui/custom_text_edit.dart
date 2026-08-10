@@ -121,7 +121,17 @@ class CustomTextEditState extends State<CustomTextEdit>
     _currentEditingState = _getInitialEditingValue();
     _clipboardStatus.addListener(_handleClipboardStatusChanged);
     if (widget.focusNode.hasFocus) {
-      _openOrCloseInputConnectionIfNeeded();
+      // Deferred a frame. Opening the connection reads `View.of(context)`, and
+      // an inherited widget must not be looked up during `initState` — the
+      // element is not yet attached to one.
+      //
+      // Reachable whenever this widget is first built already focused: a tab
+      // focused before its page was laid out, a session restored on launch, or
+      // any rebuild that keeps the focus node. Callers used to avoid it by
+      // waiting before moving focus, which hid the fault rather than fixing it.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _openOrCloseInputConnectionIfNeeded();
+      });
     }
   }
 
