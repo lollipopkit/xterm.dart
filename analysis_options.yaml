@@ -6,6 +6,14 @@ linter:
     prefer_conditional_assignment: false
 
 analyzer:
+  exclude:
+    - build/**
+    - android/**
+    - ios/**
+    - web/**
+    - windows/**
+    - macos/**
+    - linux/**
   plugins:
     - dart_code_metrics
 
