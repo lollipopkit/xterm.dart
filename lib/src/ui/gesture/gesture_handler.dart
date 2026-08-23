@@ -113,6 +113,18 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
   /// not turn round and clear it.
   bool _tapChangedSelection = false;
 
+  /// The loupe shown while a finger is choosing where the selection ends.
+  ///
+  /// A finger covers the text it is pointing at, which is the whole reason a
+  /// text field shows one; the terminal was asking people to place a boundary
+  /// they could not see. The configuration is the platform's own, so this is
+  /// a Cupertino loupe on iOS and a Material one on Android, and on a desktop
+  /// [MagnifierConfiguration.magnifierBuilder] returns null and nothing is
+  /// shown — which is right, since a mouse hides nothing.
+  final MagnifierController _magnifierController = MagnifierController();
+  final ValueNotifier<MagnifierInfo> _magnifierInfo =
+      ValueNotifier<MagnifierInfo>(MagnifierInfo.empty);
+
   static final TextSelectionControls _materialSelectionControls =
       MaterialTextSelectionControls();
   static final TextSelectionControls _cupertinoSelectionControls =
@@ -201,6 +213,10 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
   void dispose() {
     _cancelPendingTapDown();
     _tapCountResetTimer?.cancel();
+    // The loupe is in an overlay, which outlives this widget and would keep
+    // the last thing it magnified on screen.
+    _hideMagnifier();
+    _magnifierInfo.dispose();
     widget.terminalController.removeListener(_handleControllerSelectionChanged);
     _detachScrollController(_attachedScrollController);
     super.dispose();
@@ -633,6 +649,63 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
     _applySelection(_rangeFor(anchor, target));
   }
 
+  /// Puts the loupe over [localPosition], or moves it there if it is already
+  /// up. Does nothing on a platform that has no loupe.
+  void _showMagnifier(Offset localPosition) {
+    if (!mounted) {
+      return;
+    }
+
+    final cellSize = renderTerminal.cellSize;
+    final cell = renderTerminal.getCellOffset(localPosition);
+    final cellTopLeft = renderTerminal.localToGlobal(
+      renderTerminal.getOffset(cell),
+    );
+    final viewTopLeft = renderTerminal.localToGlobal(Offset.zero);
+    final viewSize = renderTerminal.size;
+
+    _magnifierInfo.value = MagnifierInfo(
+      globalGesturePosition: renderTerminal.localToGlobal(localPosition),
+      // The cell being pointed at stands in for the caret: it is the thing
+      // the loupe is meant to centre on and what the finger is covering.
+      caretRect: cellTopLeft & cellSize,
+      fieldBounds: viewTopLeft & viewSize,
+      currentLineBoundaries: Rect.fromLTWH(
+        viewTopLeft.dx,
+        cellTopLeft.dy,
+        viewSize.width,
+        cellSize.height,
+      ),
+    );
+
+    if (_magnifierController.shown) {
+      return;
+    }
+
+    final builder =
+        TextMagnifier.adaptiveMagnifierConfiguration.magnifierBuilder;
+
+    // Asked before the overlay is put up rather than inside it: a platform
+    // with no loupe answers null, and an overlay holding nothing would still
+    // be an overlay, taking the pointer and outliving the gesture.
+    if (builder(context, _magnifierController, _magnifierInfo) == null) {
+      return;
+    }
+
+    _magnifierController.show(
+      context: context,
+      builder: (BuildContext context) {
+        return builder(context, _magnifierController, _magnifierInfo)!;
+      },
+    );
+  }
+
+  void _hideMagnifier() {
+    if (_magnifierController.shown) {
+      _magnifierController.hide();
+    }
+  }
+
   bool _isPointerKindMouse(PointerDeviceKind? kind) {
     return kind == PointerDeviceKind.mouse ||
         kind == PointerDeviceKind.trackpad ||
@@ -999,6 +1072,7 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
 
   void _finishHandleDrag() {
     terminalView.stopAutoScroll();
+    _hideMagnifier();
     if (_activeDragHandle == _DragHandleType.none) {
       return;
     }
@@ -1232,6 +1306,7 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
   }
 
   void onScaleEnd(ScaleEndDetails details) {
+    _hideMagnifier();
     if (_isMouseSelectionInProgress) {
       _finishMouseSelection();
     } else if (_activeDragHandle != _DragHandleType.none && _isDraggingHandle) {
@@ -1253,6 +1328,11 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
 
   void _handleDragUpdate(Offset localPosition) {
     if (_dragHandleFixedPoint == null) return;
+
+    // Ahead of the did-anything-change test below. The loupe follows the
+    // finger rather than the selection, and stopping it every time a move
+    // stayed inside one cell is most of them.
+    _showMagnifier(localPosition);
 
     final currentCellOffset = renderTerminal.getCellOffset(localPosition);
 
@@ -1343,8 +1423,15 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
       details.localPosition,
     );
 
-    // A word rather than an insertion point, which is what a long press
-    // gives on this platform.
+    // Where a drag that grows out of this press starts from, and how much it
+    // takes at a time. Set on both paths below: it used to be set only when
+    // there was no word to select, so a long press that found one - which is
+    // nearly all of them - could not be dragged at all. Dragging on from the
+    // press is how a selection is made on a touch screen without going for a
+    // handle, and it did nothing.
+    _longPressInitialCellOffset = longPressCellOffset;
+    _granularity = _SelectionGranularity.word;
+
     final wordRange = renderTerminal.selectWord(longPressCellOffset);
     if (wordRange != null) {
       _applySelection(wordRange);
@@ -1357,8 +1444,9 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
         }
       }
     } else {
-      // No word here — a blank, or the edge. Take the one cell instead.
-      _longPressInitialCellOffset = longPressCellOffset;
+      // No word here — a blank, or the edge. Take the one cell instead, and
+      // let a drag from it go by the cell rather than by the word.
+      _granularity = _SelectionGranularity.character;
       _applySelection(BufferRangeLine.collapsed(longPressCellOffset));
     }
 
@@ -1380,6 +1468,9 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
       return;
     }
 
+    // Before the did-anything-change test, as in [_handleDragUpdate].
+    _showMagnifier(details.localPosition);
+
     final currentCellOffset = renderTerminal.getCellOffset(
       details.localPosition,
     );
@@ -1389,14 +1480,12 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
       return;
     }
 
-    final BufferRangeLine range;
-    if (currentCellOffset.isBefore(_longPressInitialCellOffset!)) {
-      range = BufferRangeLine(currentCellOffset, _longPressInitialCellOffset!);
-    } else {
-      range = BufferRangeLine(_longPressInitialCellOffset!, currentCellOffset);
-    }
-
-    _applySelection(range);
+    // Whole words, since the press took one. The word it started on stays in
+    // however far the finger travels, which is what stops the selection
+    // collapsing the moment it moves back over its own start.
+    _applySelection(
+      _rangeFor(_longPressInitialCellOffset!, currentCellOffset),
+    );
 
     terminalView.updateAutoScroll(
       details.localPosition,
@@ -1406,6 +1495,7 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
 
   void _onLongPressEnd(LongPressEndDetails details) {
     terminalView.stopAutoScroll();
+    _hideMagnifier();
 
     // Only a long press that started a selection has anything to finish.
     if (_longPressInitialCellOffset != null) {

@@ -118,6 +118,47 @@ void main() {
 
     expect(harness.selectedText, 'alpha beta');
   });
+
+  testWidgets('dragging on from a long press grows the selection', (
+    tester,
+  ) async {
+    // The way a selection is made on a touch screen without reaching for a
+    // handle. It did nothing at all unless the press had landed somewhere
+    // with no word on it.
+    final harness = await _pump(tester, 'alpha beta gamma delta');
+
+    final gesture = await harness.longPressAt(8, 0);
+    expect(harness.selectedText, 'beta');
+
+    await gesture.moveTo(harness.offsetOf(19, 0));
+    await tester.pump();
+
+    expect(harness.selectedText, 'beta gamma delta');
+
+    await gesture.up();
+    await tester.pump();
+  });
+
+  testWidgets('a long press drag shows a magnifier and puts it away', (
+    tester,
+  ) async {
+    // A finger covers what it is pointing at. Its absence is why placing the
+    // end of a selection by touch was guesswork.
+    final harness = await _pump(tester, 'alpha beta gamma delta');
+
+    expect(find.byType(TextMagnifier), findsNothing);
+
+    final gesture = await harness.longPressAt(8, 0);
+    await gesture.moveTo(harness.offsetOf(19, 0));
+    await tester.pump();
+
+    expect(find.byType(TextMagnifier), findsOneWidget);
+
+    await gesture.up();
+    await tester.pump();
+
+    expect(find.byType(TextMagnifier), findsNothing);
+  });
 }
 
 Future<_Harness> _pump(WidgetTester tester, String content) async {
@@ -212,6 +253,17 @@ class _Harness {
             : kDoubleTapMinTime,
       );
     }
+  }
+
+  /// Presses and holds at a cell, leaving the pointer down so the caller can
+  /// drag on from it.
+  Future<TestGesture> longPressAt(int column, int row) async {
+    final gesture = await tester.startGesture(
+      offsetOf(column, row),
+      kind: PointerDeviceKind.touch,
+    );
+    await tester.pump(kLongPressTimeout + const Duration(milliseconds: 1));
+    return gesture;
   }
 
   Future<void> shiftTapAt(int column, int row) async {
