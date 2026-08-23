@@ -174,6 +174,39 @@ void main() {
       expect(atlas.length, 0);
     });
 
+    test('appending to the image gives what redrawing it would', () async {
+      // The image is built by copying the previous one and drawing only what
+      // is new, which is only correct because a slot is never moved once it is
+      // handed out. Asking for the image between adds is what exercises that:
+      // it bakes each glyph into its own generation.
+      final incremental = GlyphAtlas(
+        cellSize: const Size(8, 16),
+        devicePixelRatio: 2,
+        textScaler: TextScaler.noScaling,
+        styleFor: (_) => const TextStyle(fontSize: 13),
+      );
+      final atOnce = GlyphAtlas(
+        cellSize: const Size(8, 16),
+        devicePixelRatio: 2,
+        textScaler: TextScaler.noScaling,
+        styleFor: (_) => const TextStyle(fontSize: 13),
+      );
+
+      for (var char = 0x41; char < 0x41 + 40; char++) {
+        incremental.sprite((char, 0), 1);
+        incremental.image;
+        atOnce.sprite((char, 0), 1);
+      }
+
+      expect(
+        await _bytesOf(incremental.image!),
+        await _bytesOf(atOnce.image!),
+      );
+
+      incremental.dispose();
+      atOnce.dispose();
+    });
+
     test('the image grows only when a glyph is added', () {
       atlas.sprite((0x41, 0), 1);
       final first = atlas.image;
@@ -332,3 +365,7 @@ const _contrastTolerance = 64;
 
 /// [pixels] with nothing drawn, for the test that says a blank image fails.
 Uint8List _blank(Uint8List pixels) => Uint8List(pixels.length);
+
+Future<Uint8List> _bytesOf(Image image) async {
+  return (await image.toByteData())!.buffer.asUint8List();
+}

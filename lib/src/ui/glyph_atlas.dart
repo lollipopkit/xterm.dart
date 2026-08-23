@@ -57,10 +57,13 @@ class AtlasSprite {
 /// laying the paragraph out at the exact column would have put it, which at any
 /// ratio a display uses is less than the rounding the rasteriser does anyway.
 ///
-/// The image is rebuilt whole whenever a glyph is added, because an [Image] is
-/// immutable. That is affordable because a terminal's glyph set converges: the
-/// first frames of a session add most of what a session ever needs, and after
-/// that [image] hands back the same object every frame.
+/// An [Image] is immutable, so adding a glyph means building a new one. It is
+/// built by drawing the old one into it and appending only what is new, which
+/// is exact because slots are only ever appended and never move. Redrawing
+/// every glyph instead is what it looks like it should do, and costs a screen
+/// of unfamiliar text — a page of CJK, say — 129 ms on its first frame, since
+/// each of the seventy lines asks for the image and each ask redraws
+/// everything added so far.
 class GlyphAtlas {
   GlyphAtlas({
     required Size cellSize,
@@ -98,7 +101,10 @@ class GlyphAtlas {
   final _order = <AtlasKey>[];
 
   Image? _image;
-  var _dirty = false;
+
+  /// How many of [_order] are already in [_image]. The rest are appended to it
+  /// on the next rebuild.
+  var _baked = 0;
 
   /// The shelf allocator's pen, in device pixels. Every glyph is one cell tall,
   /// so the shelves are uniform and a row never needs to be measured.
@@ -170,7 +176,6 @@ class GlyphAtlas {
       _textScaler,
     );
     _order.add(key);
-    _dirty = true;
 
     return sprite;
   }
@@ -178,20 +183,32 @@ class GlyphAtlas {
   /// The texture, rebuilt if a glyph has been added since it was last asked
   /// for. Null only when nothing has been rasterised yet.
   Image? get image {
-    if (_dirty) {
+    if (_baked != _order.length) {
       _rebuild();
     }
     return _image;
   }
 
   void _rebuild() {
-    _dirty = false;
-
     final recorder = PictureRecorder();
     final canvas = Canvas(recorder);
+
+    // Everything already in the image keeps the slot it has, so carrying it
+    // over is a copy at the origin rather than a redraw. Unscaled, because the
+    // image is already in device pixels.
+    final previous = _image;
+    if (previous != null) {
+      canvas.drawImage(
+        previous,
+        Offset.zero,
+        Paint()..filterQuality = FilterQuality.none,
+      );
+    }
+
     canvas.scale(_devicePixelRatio);
 
-    for (final key in _order) {
+    for (var i = _baked; i < _order.length; i++) {
+      final key = _order[i];
       final sprite = _sprites[key]!;
       // Both components are whole device pixels, and the canvas is scaled by
       // the ratio, so the glyph is rasterised at a whole pixel of the image.
@@ -204,13 +221,18 @@ class GlyphAtlas {
       );
     }
 
+    _baked = _order.length;
+
     final picture = recorder.endRecording();
     final width = max(1, _usedWidth().ceil());
     final height = max(1, (_penY + _slotHeight).ceil());
 
-    _image?.dispose();
     _image = picture.toImageSync(width, height);
     picture.dispose();
+
+    // The new picture holds its own reference to the old image, so letting go
+    // of this one is safe as soon as it has been recorded.
+    previous?.dispose();
   }
 
   /// The width the image needs: the full line if the pen has wrapped at least
@@ -228,7 +250,7 @@ class GlyphAtlas {
     _order.clear();
     _image?.dispose();
     _image = null;
-    _dirty = false;
+    _baked = 0;
     _penX = 0;
     _penY = 0;
   }
