@@ -27,6 +27,17 @@ class TerminalPainter {
   /// [_textStyle] is changed, or when the system font changes.
   final _paragraphCache = ParagraphCache(10240);
 
+  /// The [CellFlags] that reach [TerminalStyle.toTextStyle] and so change the
+  /// laid out glyph. The rest either resolve into the colour (`faint`,
+  /// `inverse`), stop the cell being painted at all (`invisible`), or are not
+  /// rendered (`blink`) — see [GlyphKey].
+  static const _layoutFlags =
+      CellFlags.bold |
+      CellFlags.italic |
+      CellFlags.underline |
+      CellFlags.strikethrough |
+      CellFlags.overline;
+
   TerminalStyle get textStyle => _textStyle;
   TerminalStyle _textStyle;
   set textStyle(TerminalStyle value) {
@@ -179,28 +190,26 @@ class TerminalPainter {
     final charCode = cellData.content & CellContent.codepointMask;
     if (charCode == 0) return;
 
-    final cacheKey =
-        cellData.getHash() ^
-        _textScaler.hashCode ^
-        (reverseDisplay ? 0x10000000 : 0);
-    var paragraph = _paragraphCache.getLayoutFromCache(cacheKey);
+    final cellFlags = cellData.flags;
+    if (cellFlags & CellFlags.invisible != 0) return;
 
-    if (cellData.flags & CellFlags.invisible != 0) {
-      return;
+    // Resolved before the lookup because the colour is part of the key: it is
+    // what `faint`, `inverse` and [reverseDisplay] come down to, so none of
+    // those three appear in the key on their own.
+    final inverse = (cellFlags & CellFlags.inverse != 0) ^ reverseDisplay;
+    var color = !inverse
+        ? resolveForegroundColor(cellData.foreground)
+        : resolveBackgroundColor(cellData.background);
+    if (cellFlags & CellFlags.faint != 0) {
+      color = color.withValues(alpha: 0.5);
     }
 
+    // [_textStyle] and [_textScaler] are not in the key: every setter that
+    // changes either of them clears the whole cache, as does [clearFontCache].
+    final cacheKey = (charCode, color.toARGB32(), cellFlags & _layoutFlags);
+    var paragraph = _paragraphCache.getLayoutFromCache(cacheKey);
+
     if (paragraph == null) {
-      final cellFlags = cellData.flags;
-      final inverse = (cellFlags & CellFlags.inverse != 0) ^ reverseDisplay;
-
-      var color = !inverse
-          ? resolveForegroundColor(cellData.foreground)
-          : resolveBackgroundColor(cellData.background);
-
-      if (cellData.flags & CellFlags.faint != 0) {
-        color = color.withValues(alpha: 0.5);
-      }
-
       final style = _textStyle.toTextStyle(
         color: color,
         bold: cellFlags & CellFlags.bold != 0,

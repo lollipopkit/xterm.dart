@@ -20,6 +20,15 @@ class CellData {
 
   int content;
 
+  // TODO: remove. Its only caller was the painter's paragraph cache key, which
+  // XORed this with another hash and so could collide and paint the wrong
+  // glyph; the cache is keyed by a `GlyphKey` record now and nothing in the
+  // package calls this. Kept for one release because `CellData` is exported
+  // from `core.dart`.
+  @Deprecated(
+    'Folding a cell into one int loses information. Compare the fields, or '
+    'build a record from the ones that matter.',
+  )
   int getHash() {
     return hashValues(foreground, background, flags, content);
   }
