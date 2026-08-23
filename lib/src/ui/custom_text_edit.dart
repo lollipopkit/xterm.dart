@@ -108,6 +108,10 @@ class CustomTextEditState extends State<CustomTextEdit>
   final ContextMenuController _menuController = ContextMenuController();
   final ClipboardStatusNotifier _clipboardStatus = ClipboardStatusNotifier();
   TextSelectionToolbarAnchors? _toolbarAnchors;
+
+  /// Where a menu was asked for while the clipboard state was still unknown,
+  /// so that it can be put up once that is answered. See [showToolbar].
+  Rect? _pendingToolbarRect;
   Rect _caretRect = Rect.zero;
   TextEditingController? _controller;
   VoidCallback? _controllerListener;
@@ -637,6 +641,9 @@ class CustomTextEditState extends State<CustomTextEdit>
       _menuController.remove();
     }
     _toolbarAnchors = null;
+    // Or a menu dismissed while the clipboard was still being asked about
+    // would come back on its own when the answer landed.
+    _pendingToolbarRect = null;
     // If text handles are being managed by this widget, hide them too.
     // EditableText manages its own handles.
   }
@@ -698,8 +705,27 @@ class CustomTextEditState extends State<CustomTextEdit>
         _buildContextMenuButtonItems();
     if (initialItems.isEmpty) {
       _toolbarAnchors = null;
+
+      // Flutter builds no items at all — not even copy — while the clipboard
+      // state is unknown, since whether paste belongs in the menu depends on
+      // it. `_clipboardStatus.update()` above answers on a later frame, and
+      // nothing asked for this menu a second time, so a request that arrived
+      // before the first answer was dropped and no menu appeared.
+      //
+      // How wide that window is depends on how fast the platform answers, and
+      // it starts closing as soon as the widget is built, so this is a race
+      // rather than a certainty. It is also reachable a second way, and that
+      // one is not a race: an answer that fails leaves the status unknown,
+      // and every menu until one succeeds was dropped for good.
+      //
+      // Remembered here and put up in [_handleClipboardStatusChanged] when
+      // an answer arrives.
+      _pendingToolbarRect =
+          _clipboardStatus.value == ClipboardStatus.unknown ? anchorRect : null;
       return;
     }
+
+    _pendingToolbarRect = null;
 
     _menuController.show(
       context: context,
@@ -709,13 +735,63 @@ class CustomTextEditState extends State<CustomTextEdit>
         if (anchors == null || items.isEmpty) {
           return const SizedBox.shrink();
         }
-        return AdaptiveTextSelectionToolbar.buttonItems(
-          anchors: anchors,
-          buttonItems: items,
-        );
+        return _buildMaterialToolbar(context, anchors, items);
       },
       debugRequiredFor: widget,
     );
+  }
+
+  /// The selection toolbar, in Material on every platform.
+  ///
+  /// [AdaptiveTextSelectionToolbar] would give a Cupertino one on iOS and
+  /// macOS and a desktop one on Linux and Windows, so the same terminal came
+  /// up looking like three different things. Building it here fixes the
+  /// chrome, the buttons and the labels together — going through the adaptive
+  /// widget for any of the three would put the platform back into that part.
+  Widget _buildMaterialToolbar(
+    BuildContext context,
+    TextSelectionToolbarAnchors anchors,
+    List<ContextMenuButtonItem> items,
+  ) {
+    return TextSelectionToolbar(
+      anchorAbove: anchors.primaryAnchor,
+      anchorBelow: anchors.secondaryAnchor ?? anchors.primaryAnchor,
+      children: <Widget>[
+        for (var i = 0; i < items.length; i++)
+          TextSelectionToolbarTextButton(
+            padding: TextSelectionToolbarTextButton.getPadding(i, items.length),
+            onPressed: items[i].onPressed,
+            alignment: AlignmentDirectional.centerStart,
+            child: Text(_buttonLabel(context, items[i])),
+          ),
+      ],
+    );
+  }
+
+  /// The Material label for [item].
+  ///
+  /// Switched over exhaustively rather than defaulted, so that a button type
+  /// added to Flutter is a compile error here instead of an empty button.
+  String _buttonLabel(BuildContext context, ContextMenuButtonItem item) {
+    final label = item.label;
+    if (label != null) {
+      return label;
+    }
+
+    final l10n = MaterialLocalizations.of(context);
+
+    return switch (item.type) {
+      ContextMenuButtonType.cut => l10n.cutButtonLabel,
+      ContextMenuButtonType.copy => l10n.copyButtonLabel,
+      ContextMenuButtonType.paste => l10n.pasteButtonLabel,
+      ContextMenuButtonType.selectAll => l10n.selectAllButtonLabel,
+      ContextMenuButtonType.delete => l10n.deleteButtonTooltip.toUpperCase(),
+      ContextMenuButtonType.lookUp => l10n.lookUpButtonLabel,
+      ContextMenuButtonType.searchWeb => l10n.searchWebButtonLabel,
+      ContextMenuButtonType.share => l10n.shareButtonLabel,
+      ContextMenuButtonType.liveTextInput => l10n.scanTextButtonLabel,
+      ContextMenuButtonType.custom => '',
+    };
   }
 
   void _handleClipboardStatusChanged() {
@@ -725,6 +801,17 @@ class CustomTextEditState extends State<CustomTextEdit>
     if (_menuController.isShown) {
       _menuController.markNeedsBuild();
     }
+
+    // A menu that was asked for before the clipboard answered. Now it has,
+    // there are items to put in one.
+    final pending = _pendingToolbarRect;
+    if (pending != null &&
+        !_menuController.isShown &&
+        _clipboardStatus.value != ClipboardStatus.unknown) {
+      _pendingToolbarRect = null;
+      showToolbar(globalSelectionRect: pending);
+    }
+
     setState(() {});
   }
 
