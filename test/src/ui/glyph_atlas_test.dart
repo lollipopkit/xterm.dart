@@ -220,6 +220,37 @@ void main() {
     });
   });
 
+  group('when the device pixel ratio changes', () {
+    // The atlas is rasterised at one ratio, so moving a window to a display
+    // with another has to throw it away. Keeping it would draw sprites of the
+    // wrong size, and keeping the *slots* while rebuilding at the new ratio
+    // would draw them in the wrong places.
+    const line =
+        '\x1b[38;2;255;0;0mA'
+        '\x1b[38;2;0;255;0mB'
+        '\x1b[38;2;0;0;255mC';
+    const expected = [
+      (0, 'A', 0xFFFF0000),
+      (1, 'B', 0xFF00FF00),
+      (2, 'C', 0xFF0000FF),
+    ];
+
+    for (final (from, to) in const [(2.0, 3.0), (3.0, 1.0), (1.0, 2.0)]) {
+      test('from $from to $to', () async {
+        final painter = _painter(from, 1, _realFont);
+
+        // Fill the atlas at the old ratio, then move.
+        await _paint(line, dpr: from, family: _realFont, reuse: painter);
+        painter.devicePixelRatio = to;
+
+        _expectSameInk(
+          await _paint(line, dpr: to, family: _realFont, reuse: painter),
+          await _reference(expected, dpr: to, family: _realFont),
+        );
+      });
+    }
+  });
+
   group('GlyphAtlas', () {
     late GlyphAtlas atlas;
 
@@ -356,12 +387,13 @@ Future<Uint8List> _paint(
   double scale = 1,
   int columns = 8,
   String? family,
+  TerminalPainter? reuse,
 }) async {
   final terminal = Terminal(maxLines: 4);
   terminal.resize(columns, 2);
   terminal.write(input);
 
-  final painter = _painter(dpr, scale, family);
+  final painter = reuse ?? _painter(dpr, scale, family);
 
   return _record(painter, dpr, columns, (canvas) {
     painter.paintLine(canvas, Offset.zero, terminal.buffer.lines[0]);
