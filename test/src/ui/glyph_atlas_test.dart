@@ -1,7 +1,8 @@
-import 'dart:typed_data';
+import 'dart:io';
 import 'dart:ui';
 
 import 'package:flutter/painting.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:xterm/src/terminal.dart';
 import 'package:xterm/src/ui/glyph_atlas.dart';
@@ -27,7 +28,25 @@ import 'package:xterm/src/ui/themes.dart';
 // identical box, with no overhang and no hinting. What it checks is the
 // arithmetic, at every device pixel ratio.
 
+/// A real monospace font, so the tests below are not all asking about the same
+/// square box.
+///
+/// `flutter test` lays text out in the FlutterTest font, whose every glyph is
+/// an identical rectangle that exactly fills its cell. That is the wrong shape
+/// for almost everything an atlas can get wrong: nothing overhangs, nothing is
+/// hinted, and a slot that clipped its glyph would clip nothing. Cascadia is
+/// already in this repository for the example app, and loading it is what lets
+/// the comparison see a real `f`.
+const _realFont = 'CascadiaTest';
+
 void main() {
+  setUpAll(() async {
+    final bytes = File('example/fonts/CascadiaMonoPL.ttf').readAsBytesSync();
+    await (FontLoader(_realFont)
+          ..addFont(Future.value(ByteData.sublistView(bytes))))
+        .load();
+  });
+
   group('the atlas draws what the paragraph path drew', () {
     // Every cell a colour of its own, so none of them coalesces into a run and
     // all of them take the atlas.
@@ -100,6 +119,99 @@ void main() {
         (3, 'C', 0xFF0000FF),
         (4, 'D', 0xFFFFFF00),
       ], dpr: 1);
+
+      expect(
+        () => _expectSameInk(painted, shifted),
+        throwsA(isA<TestFailure>()),
+      );
+    });
+  });
+
+  // What the box glyph could not be asked. Every case here is one the atlas is
+  // capable of getting wrong on a real font and could not get wrong on a
+  // rectangle that exactly fills its cell.
+  group('with a real font', () {
+    Future<void> sameAs(String written, List<(int, String, int)> cells) async {
+      _expectSameInk(
+        await _paint(written, dpr: 2, family: _realFont),
+        await _reference(cells, dpr: 2, family: _realFont),
+      );
+    }
+
+    test('plain letters', () async {
+      // Narrow and wide ink in the same run of cells, which a monospace font
+      // advances identically and draws nothing like.
+      await sameAs(
+        '\x1b[38;2;255;0;0mi\x1b[38;2;0;255;0mW\x1b[38;2;0;0;255ml',
+        const [
+          (0, 'i', 0xFFFF0000),
+          (1, 'W', 0xFF00FF00),
+          (2, 'l', 0xFF0000FF),
+        ],
+      );
+    });
+
+    test('an italic f, whose ink leaves its column', () async {
+      // The reason the slot carries a margin. A slot sized to the cell would
+      // cut the tail off here, and the reference draws it whole.
+      _expectSameInk(
+        await _paint('\x1b[3m\x1b[38;2;255;0;0mf', dpr: 2, family: _realFont),
+        await _reference(
+          const [(0, 'f', 0xFFFF0000)],
+          dpr: 2,
+          family: _realFont,
+          italic: true,
+        ),
+      );
+    });
+
+    test('a box drawing vertical, which leaves the cell top and bottom', () {
+      // The vertical half of the same claim, and the case that makes it
+      // necessary rather than tidy. A box drawing character overflows its line
+      // box on purpose, because that is the only way `\u2502` joins up with the
+      // one on the row below. Measured against this font's cell of 7.6 by 16:
+      // three logical pixels above and two below, where a letter with an accent
+      // overflows by none at all.
+      return sameAs(
+        '\x1b[38;2;255;0;0m\u2502',
+        const [(0, '\u2502', 0xFFFF0000)],
+      );
+    });
+
+    test('a letter with an accent, which turns out not to overflow', () async {
+      await sameAs('\x1b[38;2;255;0;0m\u00C5', const [(0, '\u00C5', 0xFFFF0000)]);
+    });
+
+    test('bold, which is a different entry and a wider glyph', () async {
+      _expectSameInk(
+        await _paint('\x1b[1m\x1b[38;2;255;0;0mB', dpr: 2, family: _realFont),
+        await _reference(
+          const [(0, 'B', 0xFFFF0000)],
+          dpr: 2,
+          family: _realFont,
+          bold: true,
+        ),
+      );
+    });
+
+    test('a faint colour over a real antialiased edge', () async {
+      await sameAs(
+        '\x1b[2m\x1b[38;2;255;0;0mS',
+        const [(0, 'S', 0x80FF0000)],
+      );
+    });
+
+    test('and a sprite one column out still does not pass', () async {
+      final painted = await _paint(
+        '\x1b[38;2;255;0;0miWl',
+        dpr: 2,
+        family: _realFont,
+      );
+      final shifted = await _reference(
+        const [(1, 'i', 0xFFFF0000), (2, 'W', 0xFFFF0000), (3, 'l', 0xFFFF0000)],
+        dpr: 2,
+        family: _realFont,
+      );
 
       expect(
         () => _expectSameInk(painted, shifted),
@@ -243,12 +355,13 @@ Future<Uint8List> _paint(
   required double dpr,
   double scale = 1,
   int columns = 8,
+  String? family,
 }) async {
   final terminal = Terminal(maxLines: 4);
   terminal.resize(columns, 2);
   terminal.write(input);
 
-  final painter = _painter(dpr, scale);
+  final painter = _painter(dpr, scale, family);
 
   return _record(painter, dpr, columns, (canvas) {
     painter.paintLine(canvas, Offset.zero, terminal.buffer.lines[0]);
@@ -271,12 +384,19 @@ Future<Uint8List> _reference(
   required double dpr,
   double scale = 1,
   int columns = 8,
+  String? family,
+  bool bold = false,
+  bool italic = false,
 }) async {
-  final painter = _painter(dpr, scale);
+  final painter = _painter(dpr, scale, family);
 
   return _record(painter, dpr, columns, (canvas) {
     for (final (column, text, argb) in cells) {
-      final style = painter.textStyle.toTextStyle(color: Color(argb));
+      final style = painter.textStyle.toTextStyle(
+        color: Color(argb),
+        bold: bold,
+        italic: italic,
+      );
       final builder = ParagraphBuilder(style.getParagraphStyle())
         ..pushStyle(style.getTextStyle(textScaler: painter.textScaler))
         ..addText(text);
@@ -296,14 +416,27 @@ Future<Uint8List> _reference(
   });
 }
 
-TerminalPainter _painter(double dpr, double scale) {
+TerminalPainter _painter(double dpr, double scale, String? family) {
   return TerminalPainter(
     theme: TerminalThemes.defaultTheme,
-    textStyle: const TerminalStyle(),
+    textStyle: family == null
+        ? const TerminalStyle()
+        : TerminalStyle(fontFamily: family, fontFamilyFallback: [family]),
     textScaler: TextScaler.linear(scale),
     devicePixelRatio: dpr,
   );
 }
+
+/// Blank rows kept above and below the line, in logical pixels.
+///
+/// Without them the image is exactly one cell tall and anything drawn outside
+/// the line box falls off it in *both* renders, so a slot that clipped a glyph
+/// would compare equal to one that did not. A box drawing vertical overflows by
+/// three pixels above and two below, which is the case that needs seeing.
+///
+/// Whole device pixels at every ratio the tests use, so it does not disturb the
+/// rounding the atlas does.
+const _bleed = 8.0;
 
 Future<Uint8List> _record(
   TerminalPainter painter,
@@ -314,12 +447,13 @@ Future<Uint8List> _record(
   final recorder = PictureRecorder();
   final canvas = Canvas(recorder);
   canvas.scale(dpr);
+  canvas.translate(0, _bleed);
   draw(canvas);
 
   final picture = recorder.endRecording();
   final image = await picture.toImage(
     (painter.cellSize.width * columns * dpr).ceil(),
-    (painter.cellSize.height * dpr).ceil(),
+    ((painter.cellSize.height + 2 * _bleed) * dpr).ceil(),
   );
   picture.dispose();
 
@@ -362,11 +496,15 @@ void _expectSameInk(Uint8List actual, Uint8List expected) {
   }
 }
 
-/// How far a partially covered pixel may differ. Measured at 43 of 255 for the
-/// test font; the round number above it is there so a small change in how
-/// Flutter rasterises text does not fail the suite, while a sprite drawn in the
-/// wrong colour or at the wrong scale still does.
-const _contrastTolerance = 64;
+/// How far a partially covered pixel may differ.
+///
+/// Measured at 65 of 255 over the real font's antialiased edges, and 43 over
+/// the test font's; the round number above both is there so a small change in
+/// how Flutter rasterises text does not fail the suite. It is the loose half of
+/// [_expectSameInk] and it is meant to be — the coverage rule above it is what
+/// has teeth, and the cases that fail on purpose (a blank image, a sprite one
+/// column out) fail on that rather than on this.
+const _contrastTolerance = 96;
 
 /// [pixels] with nothing drawn, for the test that says a blank image fails.
 Uint8List _blank(Uint8List pixels) => Uint8List(pixels.length);
