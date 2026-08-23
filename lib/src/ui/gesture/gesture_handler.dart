@@ -104,6 +104,12 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
   Offset? _lastTapDownPosition;
   Timer? _tapCountResetTimer;
 
+  /// The last pointer to go down, seen by [_onPointerDown] rather than by the
+  /// arena, so that a drag which never produced a tap still knows where it
+  /// started and what it started with.
+  PointerDeviceKind? _lastPointerDownKind;
+  Offset? _lastPointerDownPosition;
+
   /// What the drag now under way grows by. Set when it starts, from the tap
   /// count that started it, and read on every move: a drag begun by a double
   /// click keeps taking whole words however far it goes.
@@ -171,25 +177,30 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
       );
     }
 
-    return GestureDetector(
+    // The pointer going down is watched outside the arena, because half of
+    // what this widget does keys off it and the tap recogniser cannot be
+    // relied on to report it: see [_onPointerDown].
+    return Listener(
       behavior: HitTestBehavior.deferToChild,
-      child: content,
-      onTapUp: onTapUp,
-      onTapDown: onTapDown,
-      onSecondaryTapDown: onSecondaryTapDown,
-      onSecondaryTapUp: onSecondaryTapUp,
-      onTertiaryTapDown: widget.onTertiaryTapDown,
-      onTertiaryTapUp: widget.onTertiaryTapUp,
-      // No `onDoubleTapDown`. Registering a double tap takes the second tap
-      // out of `onTapDown`, and then a third one looks like a second: the
-      // count kept below is what distinguishes them, and it can only see
-      // taps the tap recogniser still reports.
-      onScaleEnd: onScaleEnd,
-      onScaleStart: onScaleStart,
-      onScaleUpdate: onScaleUpdate,
-      onLongPressStart: _onLongPressStart,
-      onLongPressMoveUpdate: _onLongPressMoveUpdate,
-      onLongPressEnd: _onLongPressEnd,
+      onPointerDown: _onPointerDown,
+      child: GestureDetector(
+        behavior: HitTestBehavior.deferToChild,
+        child: content,
+        onTapUp: onTapUp,
+        onTapDown: onTapDown,
+        onSecondaryTapDown: onSecondaryTapDown,
+        onSecondaryTapUp: onSecondaryTapUp,
+        onTertiaryTapDown: widget.onTertiaryTapDown,
+        onTertiaryTapUp: widget.onTertiaryTapUp,
+        // No `onDoubleTapDown`. Registering a double tap takes the second tap
+        // out of `onTapDown`, and then a third one looks like a second.
+        onScaleEnd: onScaleEnd,
+        onScaleStart: onScaleStart,
+        onScaleUpdate: onScaleUpdate,
+        onLongPressStart: _onLongPressStart,
+        onLongPressMoveUpdate: _onLongPressMoveUpdate,
+        onLongPressEnd: _onLongPressEnd,
+      ),
     );
   }
 
@@ -558,6 +569,27 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
     _lastTapTime = now;
     _lastTapPosition = position;
     return false;
+  }
+
+  /// Every pointer going down, before the arena has decided anything.
+  ///
+  /// [GestureDetector.onTapDown] is not that. A tap recogniser reports one
+  /// only when it wins the arena or when [kPressTimeout] passes, and a press
+  /// that turns straight into a drag gives it neither: the drag takes the
+  /// arena first. Anything hung off `onTapDown` therefore does not happen at
+  /// all unless the pointer is held still for a moment first, which is how
+  /// dragging a selection out came to need a pause before it would start,
+  /// and how the second click of a double click went uncounted when the
+  /// drag began on it.
+  void _onPointerDown(PointerDownEvent event) {
+    _lastPointerDownKind = event.kind;
+    _lastPointerDownPosition = renderTerminal.globalToLocal(event.position);
+
+    // Per gesture, and this is a new one. Set at the end of the last drag for
+    // a tap-up that only arrives if the tap recogniser won.
+    _suppressNextTapUp = false;
+
+    _countTap(_lastPointerDownPosition!);
   }
 
   /// Counts this pointer-down into the run of taps at the same place, and
@@ -934,7 +966,8 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
       _resetMouseSelectionState();
     }
 
-    final tapCount = _countTap(details.localPosition);
+    // Already counted, by [_onPointerDown], for this same press.
+    final tapCount = _consecutiveTapCount;
     final cellOffset = renderTerminal.getCellOffset(details.localPosition);
 
     final hasSelection =
@@ -1232,9 +1265,40 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
     _tapUp(widget.onTertiaryTapUp, details, TerminalMouseButton.right);
   }
 
+  /// Anchors a mouse selection that [onTapDown] never got to anchor.
+  ///
+  /// The anchor is where the button went down, not where the drag was
+  /// recognised: by then the pointer has already moved past the slop, and
+  /// starting there would drop the first character or two of every selection
+  /// dragged out in one motion.
+  void _anchorMouseSelectionIfNeeded() {
+    if (_isMouseDeviceDown || _isDraggingHandle || _isDragHandleReady) {
+      return;
+    }
+
+    final position = _lastPointerDownPosition;
+    if (position == null || !_isPointerKindMouse(_lastPointerDownKind)) {
+      return;
+    }
+
+    _isMouseDeviceDown = true;
+    _mousePointerKind = _lastPointerDownKind;
+    _mouseSelectionBase = renderTerminal.getCellOffset(position);
+    _isMouseSelectionInProgress = false;
+    _mouseSelectionLastPosition = position;
+    _mouseTapDownDispatched = false;
+
+    // From the run this press belongs to, which [_onPointerDown] counted even
+    // though no tap came of it. Dragging off the second click of a double
+    // click goes on taking whole words.
+    _granularity = _granularityForTapCount(_consecutiveTapCount);
+  }
+
   void onScaleStart(ScaleStartDetails details) {
     // Whatever this turns out to be, it is not the click being held back.
     _cancelPendingTapDown();
+
+    _anchorMouseSelectionIfNeeded();
 
     // Already armed by the tap that landed on the handle.
     if (_isDragHandleReady && _activeDragHandle != _DragHandleType.none) {

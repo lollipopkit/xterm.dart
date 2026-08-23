@@ -119,6 +119,52 @@ void main() {
     expect(harness.selectedText, 'alpha beta');
   });
 
+  testWidgets('a press that turns straight into a drag still selects', (
+    tester,
+  ) async {
+    // Nothing pauses between pressing and moving, so kPressTimeout never
+    // elapses and the drag takes the arena before the tap recogniser can
+    // report a tap-down. Everything keyed off that used not to happen: the
+    // selection had no anchor and dragging did nothing at all unless the
+    // button was held still for a moment first.
+    final harness = await _pump(tester, 'alpha beta gamma delta');
+
+    final gesture = await tester.startGesture(
+      harness.offsetOf(0, 0),
+      kind: PointerDeviceKind.mouse,
+    );
+    await gesture.moveTo(harness.offsetOf(10, 0));
+    await tester.pump();
+
+    expect(harness.selectedText, 'alpha beta');
+
+    await gesture.up();
+    await tester.pump();
+  });
+
+  testWidgets('a drag off the second click of a double click takes words', (
+    tester,
+  ) async {
+    // The second press is the one the drag begins on, so it produces no
+    // tap-down either, and the run it belongs to has to have been counted
+    // somewhere the arena cannot swallow.
+    final harness = await _pump(tester, 'alpha beta gamma delta');
+
+    await harness.tapAt(8, 0, kind: PointerDeviceKind.mouse, settle: false);
+
+    final gesture = await tester.startGesture(
+      harness.offsetOf(8, 0),
+      kind: PointerDeviceKind.mouse,
+    );
+    await gesture.moveTo(harness.offsetOf(13, 0));
+    await tester.pump();
+
+    expect(harness.selectedText, 'beta gamma');
+
+    await gesture.up();
+    await tester.pump();
+  });
+
   testWidgets('dragging on from a long press grows the selection', (
     tester,
   ) async {
