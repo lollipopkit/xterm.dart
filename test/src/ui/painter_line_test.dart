@@ -178,6 +178,29 @@ void main() {
     });
   });
 
+  test('every sprite lands on a whole device pixel', () {
+    // What keeps a sprite a copy of its texels rather than a resample of them,
+    // and so what keeps the text sharp. At the default scale the test font's
+    // cell is exactly 13 logical pixels and every column is already whole, so
+    // this has to be asked at a scale where it is not: 14.3, over a ratio of 2.
+    const dpr = 2.0;
+    final painted = _paintLine(
+      '\x1b[38;2;255;0;0ma\x1b[38;2;0;255;0mb\x1b[38;2;0;0;255mc',
+      scale: 1.1,
+      dpr: dpr,
+    );
+
+    expect(painted.spriteOffsets, hasLength(3));
+
+    for (final offset in painted.spriteOffsets) {
+      expect(
+        offset * dpr,
+        closeTo((offset * dpr).roundToDouble(), 1e-6),
+        reason: '$offset is not a whole number of device pixels',
+      );
+    }
+  });
+
   test('every background is painted before any glyph', () {
     // Painting a cell at a time used to interleave them, so a glyph wider than
     // its cell was clipped by the next cell's background.
@@ -194,7 +217,12 @@ void main() {
   });
 }
 
-_Painted _paintLine(String input, {int width = 20}) {
+_Painted _paintLine(
+  String input, {
+  int width = 20,
+  double scale = 1,
+  double dpr = 1,
+}) {
   final terminal = Terminal(maxLines: 4);
   terminal.resize(width, 2);
   terminal.write(input);
@@ -202,7 +230,8 @@ _Painted _paintLine(String input, {int width = 20}) {
   final painter = TerminalPainter(
     theme: TerminalThemes.defaultTheme,
     textStyle: const TerminalStyle(),
-    textScaler: TextScaler.noScaling,
+    textScaler: TextScaler.linear(scale),
+    devicePixelRatio: dpr,
   );
 
   final recorder = PictureRecorder();
@@ -227,6 +256,12 @@ class _Painted {
 
   List<Rect> get rects =>
       ops.whereType<_RectOp>().map((op) => op.rect).toList();
+
+  /// Where each sprite was placed, before the padding is taken back off.
+  List<double> get spriteOffsets => [
+    for (final op in ops.whereType<_AtlasOp>())
+      for (var i = 0; i < op.rects.length ~/ 4; i++) op.transforms[i * 4 + 2],
+  ];
 
   /// The x offset of column [n].
   double columns(int n) => n * cellWidth;

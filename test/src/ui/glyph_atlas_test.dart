@@ -53,6 +53,17 @@ void main() {
       });
     }
 
+    test('when the cell width is not a whole number of pixels', () async {
+      // The case the rounding exists for. At the default scale the test font's
+      // cell is exactly 13 logical pixels, so every column already lands on a
+      // device pixel and the rounding is a no-op; at 1.1 the cell is 14.3 and
+      // it is not.
+      _expectSameInk(
+        await _paint(line, dpr: 2, scale: 1.1),
+        await _reference(expected, dpr: 2, scale: 1.1),
+      );
+    });
+
     test('for a wide character, which spans two columns', () async {
       _expectSameInk(
         await _paint('\x1b[38;2;255;0;0m中', dpr: 2),
@@ -192,13 +203,14 @@ void main() {
 Future<Uint8List> _paint(
   String input, {
   required double dpr,
+  double scale = 1,
   int columns = 8,
 }) async {
   final terminal = Terminal(maxLines: 4);
   terminal.resize(columns, 2);
   terminal.write(input);
 
-  final painter = _painter(dpr);
+  final painter = _painter(dpr, scale);
 
   return _record(painter, dpr, columns, (canvas) {
     painter.paintLine(canvas, Offset.zero, terminal.buffer.lines[0]);
@@ -219,9 +231,10 @@ Future<Uint8List> _paint(
 Future<Uint8List> _reference(
   List<(int, String, int)> cells, {
   required double dpr,
+  double scale = 1,
   int columns = 8,
 }) async {
-  final painter = _painter(dpr);
+  final painter = _painter(dpr, scale);
 
   return _record(painter, dpr, columns, (canvas) {
     for (final (column, text, argb) in cells) {
@@ -245,11 +258,11 @@ Future<Uint8List> _reference(
   });
 }
 
-TerminalPainter _painter(double dpr) {
+TerminalPainter _painter(double dpr, double scale) {
   return TerminalPainter(
     theme: TerminalThemes.defaultTheme,
     textStyle: const TerminalStyle(),
-    textScaler: TextScaler.noScaling,
+    textScaler: TextScaler.linear(scale),
     devicePixelRatio: dpr,
   );
 }
