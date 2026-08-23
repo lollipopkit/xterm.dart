@@ -55,6 +55,13 @@ class TerminalPainter {
   /// 17.8 ms.
   final _runCache = ParagraphCache<RunKey>(2048);
 
+  /// Laid out clusters — the cells holding a base character and its combining
+  /// marks. Kept apart from [_runCache] rather than sharing its keys because a
+  /// cluster is laid out with the font's default features: composing a base and
+  /// its marks into one glyph is the shaping a run turns off. Small because a
+  /// screen rarely has more than a handful.
+  final _clusterCache = ParagraphCache<RunKey>(256);
+
   /// Reused across [Paint] calls; only its colour changes.
   final _backgroundPaint = Paint();
 
@@ -140,6 +147,7 @@ class TerminalPainter {
     _backgroundArgb = value.background.toARGB32();
     _glyphCache.clear();
     _runCache.clear();
+    _clusterCache.clear();
   }
 
   Size _measureCharSize() {
@@ -162,6 +170,7 @@ class TerminalPainter {
   void _clearFontDependentCaches() {
     _glyphCache.clear();
     _runCache.clear();
+    _clusterCache.clear();
     _uncoalescableKinds.clear();
   }
 
@@ -345,6 +354,20 @@ class TerminalPainter {
         inverse,
       );
 
+      // A cluster is drawn on its own: its glyph is composed from more than one
+      // code point and need not advance by one cell, so a run cannot hold it.
+      if (content & CellContent.clusterFlag != 0) {
+        _flushRun(canvas, offset);
+        _paintCluster(
+          canvas,
+          offset.translate(i * _cellSize.width, 0),
+          line.getCluster(i) ?? String.fromCharCode(charCode),
+          argb,
+          layoutFlags,
+        );
+        continue;
+      }
+
       final charClass = content >> CellContent.widthShift == 1
           ? _charClass(charCode)
           : -1;
@@ -455,13 +478,49 @@ class TerminalPainter {
     if (flags & CellFlags.invisible != 0) return;
 
     final layoutFlags = flags & _layoutFlags;
+    final argb = _cellForegroundArgb(cellData, reverseDisplay);
+
+    final cluster = cellData.cluster;
+    if (cluster != null) {
+      _paintCluster(canvas, offset, cluster, argb, layoutFlags);
+      return;
+    }
+
     _paintGlyph(
       canvas,
       offset,
       _glyphChar(charCode, layoutFlags),
-      _cellForegroundArgb(cellData, reverseDisplay),
+      argb,
       layoutFlags,
     );
+  }
+
+  /// Draws one cell whose text is [text], a base character and the marks that
+  /// belong to it.
+  ///
+  /// Unlike [_paintGlyph] this does not substitute a non-breaking space for an
+  /// underlined space: a cluster's base is never a space, since a mark attaches
+  /// to whatever character it followed and a space with marks is not something
+  /// a program writes.
+  @pragma('vm:prefer-inline')
+  void _paintCluster(
+    Canvas canvas,
+    Offset offset,
+    String text,
+    int argb,
+    int layoutFlags,
+  ) {
+    final key = (text, argb, layoutFlags);
+    final paragraph =
+        _clusterCache.getLayoutFromCache(key) ??
+        _clusterCache.performAndCacheLayout(
+          text,
+          _styleFor(argb, layoutFlags),
+          _textScaler,
+          key,
+        );
+
+    canvas.drawParagraph(paragraph, offset);
   }
 
   @pragma('vm:prefer-inline')

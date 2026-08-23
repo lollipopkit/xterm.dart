@@ -4,6 +4,7 @@ import 'package:xterm/src/core/buffer/cell_offset.dart';
 import 'package:xterm/src/core/buffer/line.dart';
 import 'package:xterm/src/core/buffer/range_line.dart';
 import 'package:xterm/src/core/buffer/range.dart';
+import 'package:xterm/src/core/cell.dart';
 import 'package:xterm/src/core/charset.dart';
 import 'package:xterm/src/core/cursor.dart';
 import 'package:xterm/src/core/reflow.dart';
@@ -108,7 +109,10 @@ class Buffer {
   /// characters are not interpreted and directly added to the buffer.
   ///
   /// Returns the code point that was written after charset translation, or
-  /// null if the code point could not be represented as a standalone cell.
+  /// null if the code point did not become a cell of its own — because it
+  /// joined the cluster of the cell before it, or because there was no such
+  /// cell and it was dropped. `repeatPreviousCharacter` reads that return
+  /// value, and a combining mark is not what REP should repeat.
   ///
   /// See also: [Terminal.writeChar]
   int? writeChar(int codePoint, {bool translate = true}) {
@@ -117,10 +121,12 @@ class Buffer {
     }
 
     var cellWidth = unicodeWidth.wcwidth(codePoint);
-    if (cellWidth == 0 && codePoint != 0) {
-      // The current cell storage model stores a single code point per cell and
-      // cannot represent combining character sequences. Do not let zero-width
-      // code points overwrite the next cell or advance the cursor.
+
+    if (codePoint != 0 && (cellWidth == 0 || _continuesCluster(codePoint))) {
+      // The code point belongs to the character before it rather than to a
+      // column of its own. Appending leaves the cursor where it is, which is
+      // where the program that wrote it believes the cursor to be.
+      _appendToCluster(codePoint);
       return null;
     }
 
@@ -163,6 +169,105 @@ class Buffer {
     }
 
     return codePoint;
+  }
+
+  /// The most UTF-16 code units one cell's text may grow to.
+  ///
+  /// Nothing legible needs anywhere near this many; the limit is there because
+  /// a program can send combining marks indefinitely, and without it one column
+  /// would hold a string that keeps growing.
+  static const _maxClusterUnits = 32;
+
+  static const _zeroWidthJoiner = 0x200D;
+
+  /// Whether [codePoint] belongs to the cluster of the cell before the cursor
+  /// even though it has a column width of its own.
+  ///
+  /// Two cases, neither of which the width table can express:
+  ///
+  /// - Anything following a zero width joiner. `👨‍👩‍👧` is three emoji and two
+  ///   joiners, and every emoji after a joiner is East Asian Wide.
+  /// - An emoji modifier, U+1F3FB to U+1F3FF, the skin tones. Also Wide, and
+  ///   only ever rendered as part of the emoji before it.
+  ///
+  /// Regional indicators are deliberately absent. A flag is two of them and
+  /// draws as one two-column glyph, but the width table gives each one column,
+  /// so joining the pair would leave a two-column glyph in a one-column cell
+  /// and push the rest of the line off the grid.
+  bool _continuesCluster(int codePoint) {
+    if (codePoint >= 0x1F3FB && codePoint <= 0x1F3FF) {
+      return true;
+    }
+
+    final target = _clusterTarget();
+    if (target == null) {
+      return false;
+    }
+
+    // A joiner is itself zero width, so it is only ever inside a cluster, and
+    // a cell without one cannot be holding it. That check is a single array
+    // read, which is what this costs for ordinary text.
+    final (line, x) = target;
+    if (line.getContent(x) & CellContent.clusterFlag == 0) {
+      return false;
+    }
+
+    final cluster = line.getCluster(x)!;
+    return cluster.codeUnitAt(cluster.length - 1) == _zeroWidthJoiner;
+  }
+
+  /// Appends [codePoint] to the text of the cell it belongs to, if there is
+  /// one. Dropping it is the alternative: giving it a cell of its own would
+  /// advance the cursor past a column it does not fill.
+  void _appendToCluster(int codePoint) {
+    final target = _clusterTarget();
+    if (target == null) {
+      return;
+    }
+
+    final (line, x) = target;
+    final existing =
+        line.getCluster(x) ?? String.fromCharCode(line.getCodePoint(x));
+
+    if (existing.length >= _maxClusterUnits) {
+      return;
+    }
+
+    line.setCluster(x, existing + String.fromCharCode(codePoint));
+  }
+
+  /// The cell a zero-width or continuing code point attaches to, or null when
+  /// there is none — at the start of the buffer, or after a column nothing has
+  /// been written to.
+  (BufferLine, int)? _clusterTarget() {
+    var line = currentLine;
+    var x = min(_cursorX, terminal.viewWidth) - 1;
+
+    if (x < 0) {
+      // A mark can arrive in the first column of a line the terminal wrapped,
+      // in which case its base is the last cell of the line above.
+      if (!line.isWrapped || absoluteCursorY == 0) {
+        return null;
+      }
+      line = lines[absoluteCursorY - 1];
+      x = line.length - 1;
+      if (x < 0) {
+        return null;
+      }
+    }
+
+    // The right half of a wide character carries no code point; the base is the
+    // column before it. An empty cell looks the same from here, so what
+    // distinguishes them is the cell to the left being two columns wide.
+    if (line.getCodePoint(x) == 0 && x > 0 && line.getWidth(x - 1) == 2) {
+      x--;
+    }
+
+    if (line.getCodePoint(x) == 0) {
+      return null;
+    }
+
+    return (line, x);
   }
 
   void _prepareOverwrite(BufferLine line, int cellWidth) {

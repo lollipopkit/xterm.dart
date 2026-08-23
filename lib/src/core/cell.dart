@@ -6,6 +6,7 @@ class CellData {
     required this.background,
     required this.flags,
     required this.content,
+    this.cluster,
   });
 
   factory CellData.empty() {
@@ -19,6 +20,13 @@ class CellData {
   int flags;
 
   int content;
+
+  /// The cell's whole text when it holds more than the one code point [content]
+  /// has room for, and null when it does not. See [CellContent.clusterFlag].
+  ///
+  /// Carried here so that a cell copied out of a line and written back to
+  /// another arrives intact; [content] alone cannot say what the marks were.
+  String? cluster;
 
   // TODO: remove. Its only caller was the painter's paragraph cache key, which
   // XORed this with another hash and so could collide and paint the wrong
@@ -35,7 +43,7 @@ class CellData {
 
   @override
   String toString() {
-    return 'CellData{foreground: $foreground, background: $background, flags: $flags, content: $content}';
+    return 'CellData{foreground: $foreground, background: $background, flags: $flags, content: $content, cluster: $cluster}';
   }
 }
 
@@ -66,6 +74,16 @@ abstract class CellColor {
 abstract class CellContent {
   static const codepointMask = 0x1fffff;
 
+  /// Set when the cell's text is longer than the single code point below, and
+  /// the whole of it is held beside the line's `Uint32List`. The code point
+  /// stays the cluster's base, so a reader that does not know about clusters
+  /// gets the character without its marks rather than nothing.
+  ///
+  /// Bit 21 is free because a code point stops at U+10FFFF, which fits in the
+  /// 21 of [codepointMask]. It is the same bit xterm.js uses for the same
+  /// purpose.
+  static const clusterFlag = 1 << 21;
+
   static const widthShift = 22;
-  // static const widthMask = 3 << widthShift;
+  static const widthMask = 3 << widthShift;
 }

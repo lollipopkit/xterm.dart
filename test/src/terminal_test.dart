@@ -224,7 +224,7 @@ void main() {
 
       terminal.write('e\u0301X');
 
-      expect(terminal.buffer.lines[0].getText(), 'eX');
+      expect(terminal.buffer.lines[0].getText(), 'e\u0301X');
       expect(terminal.buffer.cursorX, 2);
     });
 

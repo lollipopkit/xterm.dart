@@ -35,6 +35,17 @@ class BufferLine with IndexedItem {
 
   List<CellAnchor> get anchors => _anchors;
 
+  /// The whole text of the cells that hold more than the one code point [_data]
+  /// has room for, keyed by column. Null until the line has one, which for most
+  /// lines is never: a map per line would cost more than the feature.
+  ///
+  /// A column appears here exactly when its content has
+  /// [CellContent.clusterFlag], and the string always starts with that cell's
+  /// own code point. Every mutation below either routes through a setter that
+  /// drops the entry or moves it explicitly; a stale entry would put one cell's
+  /// marks on whatever text replaced it.
+  Map<int, String>? _clusters;
+
   int getForeground(int index) {
     return _data[index * _cellSize + _cellForeground];
   }
@@ -59,12 +70,29 @@ class BufferLine with IndexedItem {
     return _data[index * _cellSize + _cellContent] >> CellContent.widthShift;
   }
 
+  /// The whole text of the cell at [index] — its base character followed by the
+  /// combining marks or joined code points that belong to it — or null when the
+  /// cell is the single code point [getCodePoint] returns.
+  String? getCluster(int index) {
+    return _clusters?[index];
+  }
+
+  /// Gives the cell at [index] the text [cluster], which must begin with the
+  /// code point already in the cell: [getCodePoint], [getWidth] and everything
+  /// that lays out the grid keep reading that, and only the drawn and copied
+  /// text changes.
+  void setCluster(int index, String cluster) {
+    (_clusters ??= <int, String>{})[index] = cluster;
+    _data[index * _cellSize + _cellContent] |= CellContent.clusterFlag;
+  }
+
   void getCellData(int index, CellData cellData) {
     final offset = index * _cellSize;
     cellData.foreground = _data[offset + _cellForeground];
     cellData.background = _data[offset + _cellBackground];
     cellData.flags = _data[offset + _cellAttributes];
     cellData.content = _data[offset + _cellContent];
+    cellData.cluster = _clusters?[index];
   }
 
   CellData createCellData(int index) {
@@ -87,6 +115,7 @@ class BufferLine with IndexedItem {
 
   void setContent(int index, int value) {
     _data[index * _cellSize + _cellContent] = value;
+    _clusters?.remove(index);
   }
 
   void setCodePoint(int index, int char) {
@@ -100,14 +129,29 @@ class BufferLine with IndexedItem {
     _data[offset + _cellBackground] = style.background;
     _data[offset + _cellAttributes] = style.attrs;
     _data[offset + _cellContent] = char | (witdh << CellContent.widthShift);
+    _clusters?.remove(index);
   }
 
+  /// Writes [cellData] to the cell at [index], including its cluster.
+  ///
+  /// The flag is taken from `cellData.cluster` rather than from its content, so
+  /// that a caller that built a [CellData] by hand cannot leave the cell
+  /// claiming a cluster the line does not have.
   void setCellData(int index, CellData cellData) {
     final offset = index * _cellSize;
     _data[offset + _cellForeground] = cellData.foreground;
     _data[offset + _cellBackground] = cellData.background;
     _data[offset + _cellAttributes] = cellData.flags;
-    _data[offset + _cellContent] = cellData.content;
+
+    final cluster = cellData.cluster;
+    if (cluster == null) {
+      _data[offset + _cellContent] =
+          cellData.content & ~CellContent.clusterFlag;
+      _clusters?.remove(index);
+    } else {
+      _data[offset + _cellContent] = cellData.content | CellContent.clusterFlag;
+      (_clusters ??= <int, String>{})[index] = cluster;
+    }
   }
 
   void eraseCell(int index, CursorStyle style) {
@@ -116,6 +160,7 @@ class BufferLine with IndexedItem {
     _data[offset + _cellBackground] = style.background;
     _data[offset + _cellAttributes] = style.attrs;
     _data[offset + _cellContent] = 0;
+    _clusters?.remove(index);
   }
 
   void resetCell(int index) {
@@ -124,6 +169,7 @@ class BufferLine with IndexedItem {
     _data[offset + _cellBackground] = 0;
     _data[offset + _cellAttributes] = 0;
     _data[offset + _cellContent] = 0;
+    _clusters?.remove(index);
   }
 
   /// Erase cells whose index satisfies [start] <= index < [end]. Erased cells
@@ -172,6 +218,12 @@ class BufferLine with IndexedItem {
       for (var i = moveStart; i < moveEnd; i++) {
         _data[i] = _data[i + moveOffset];
       }
+
+      // The cells moved as raw words, so the clusters keyed off their old
+      // columns have to follow. When the branch is not taken there is nothing
+      // to move: everything from [start] on is erased below, and erasing drops
+      // the entry.
+      _shiftClusters(start, -count);
     }
 
     for (var i = _length - count; i < _length; i++) {
@@ -221,6 +273,9 @@ class BufferLine with IndexedItem {
       for (var i = moveEnd - 1; i >= moveStart; i--) {
         _data[i + moveOffset] = _data[i];
       }
+
+      // As in [removeCells]: the words moved, so their clusters move with them.
+      _shiftClusters(start, count);
     }
 
     final end = min(start + count, _length);
@@ -264,6 +319,13 @@ class BufferLine with IndexedItem {
     }
 
     _length = length;
+
+    // Shrinking leaves the words of the cells that fell off the end in place,
+    // so growing again can bring them back. Their clusters do not come back
+    // with them: [getCluster] answering null for a cell whose flag is set costs
+    // the marks, where keeping the entry would put them on whatever the column
+    // holds by then.
+    _clusters?.removeWhere((index, _) => index >= _length);
 
     if (_length > 0 && getWidth(_length - 1) == 2) {
       resetCell(_length - 1);
@@ -329,7 +391,58 @@ class BufferLine with IndexedItem {
       _data[dstOffset++] = src._data[srcOffset++];
     }
 
+    _copyClusters(src, srcCol, dstCol, len);
+
     _cleanupWideFragmentsAroundRange(dstCol, dstCol + len);
+  }
+
+  /// Replaces the clusters of `[dstCol, dstCol + len)` with [src]'s, so the
+  /// destination range holds what the copied words say it holds and nothing of
+  /// what was there before.
+  void _copyClusters(BufferLine src, int srcCol, int dstCol, int len) {
+    final theirs = src._clusters;
+    final mine = _clusters;
+
+    if (mine != null && mine.isNotEmpty) {
+      mine.removeWhere((index, _) => index >= dstCol && index < dstCol + len);
+    }
+
+    if (theirs == null || theirs.isEmpty) {
+      return;
+    }
+
+    for (var i = 0; i < len; i++) {
+      final cluster = theirs[srcCol + i];
+      if (cluster != null) {
+        (_clusters ??= <int, String>{})[dstCol + i] = cluster;
+      }
+    }
+  }
+
+  /// Moves every cluster at or after [from] by [delta] columns, to follow cells
+  /// that moved as raw words. An entry that lands before [from] was overwritten
+  /// by the move, and one that lands past the end of the line left it; both are
+  /// dropped.
+  void _shiftClusters(int from, int delta) {
+    final clusters = _clusters;
+    if (clusters == null || clusters.isEmpty) {
+      return;
+    }
+
+    final moved = <int, String>{};
+    clusters.forEach((index, cluster) {
+      if (index < from) {
+        moved[index] = cluster;
+        return;
+      }
+      final to = index + delta;
+      if (to < from || to >= _length) {
+        return;
+      }
+      moved[to] = cluster;
+    });
+
+    _clusters = moved;
   }
 
   void _cleanupWideFragmentsAroundRange(int start, int end) {
@@ -387,7 +500,14 @@ class BufferLine with IndexedItem {
       final codePoint = getCodePoint(i);
       final width = getWidth(i);
       if (codePoint != 0 && i + width <= to) {
-        builder.writeCharCode(codePoint);
+        // The cluster already starts with this cell's code point, so it
+        // replaces it rather than following it.
+        final cluster = _clusters?[i];
+        if (cluster != null) {
+          builder.write(cluster);
+        } else {
+          builder.writeCharCode(codePoint);
+        }
       }
     }
 

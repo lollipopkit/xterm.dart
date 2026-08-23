@@ -95,6 +95,38 @@ void main() {
       expect(painted.paragraphs, hasLength(1));
       expect(painted.cellsIn(0), 3);
     });
+
+    test('a cell holding combining marks is drawn on its own', () {
+      // The cluster's glyph is composed from more than one code point and need
+      // not advance by one cell, so it cannot sit inside a run. It also has to
+      // break the run either side of it rather than be skipped.
+      final painted = _paintLine('ab́c');
+
+      expect(painted.paragraphs, hasLength(3));
+      expect(painted.paragraphs[0].offset.dx, painted.columns(0));
+      expect(painted.paragraphs[1].offset.dx, painted.columns(1));
+      expect(painted.paragraphs[2].offset.dx, painted.columns(2));
+    });
+
+    test('a cluster paints its marks rather than the base alone', () {
+      final painted = _paintLine('á');
+
+      // Width says nothing here: the mark advances by zero, so a cluster and
+      // its bare base lay out the same. What the paragraph was built from is
+      // the claim, and its length is the way to read that back.
+      expect(painted.paragraphs, hasLength(1));
+      expect(painted.codeUnitsIn(0), 2);
+      expect(_paintLine('a').codeUnitsIn(0), 1);
+    });
+
+    test('a zero width joiner sequence is laid out as one paragraph', () {
+      final painted = _paintLine('\u{1F468}‍\u{1F469}‍\u{1F467}');
+
+      expect(painted.paragraphs, hasLength(1));
+      expect(painted.paragraphs.single.offset.dx, painted.columns(0));
+      // Three surrogate pairs and two joiners.
+      expect(painted.codeUnitsIn(0), 8);
+    });
   });
 
   group('background spans', () {
@@ -186,6 +218,16 @@ class _Painted {
   /// How many cells wide the paragraph at [index] laid out as.
   int cellsIn(int index) {
     return (paragraphs[index].paragraph!.maxIntrinsicWidth / cellWidth).round();
+  }
+
+  /// How many UTF-16 code units the paragraph at [index] was built from.
+  ///
+  /// A [Paragraph] does not hand its text back, but the caret position past its
+  /// right edge is the offset of the end of that text.
+  int codeUnitsIn(int index) {
+    return paragraphs[index].paragraph!
+        .getPositionForOffset(const Offset(double.maxFinite, 1))
+        .offset;
   }
 }
 

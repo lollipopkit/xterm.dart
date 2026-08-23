@@ -31,11 +31,16 @@ class _LineBuilder {
   /// causing reflow to make no progress.
   void addWideAsNarrow(BufferLine src, int index) {
     _result.resize(_length + 1);
-    _result.setCellData(_length, src.createCellData(index));
-    _result.setContent(
-      _length,
-      src.getCodePoint(index) | (1 << CellContent.widthShift),
-    );
+
+    // Narrowed in the copy rather than by a second write, so the cell keeps
+    // whatever else its content says — its cluster, in particular, which
+    // rewriting the content from the code point alone would drop.
+    final cell = src.createCellData(index);
+    cell.content =
+        (cell.content & ~CellContent.widthMask) |
+        (1 << CellContent.widthShift);
+    _result.setCellData(_length, cell);
+
     _length++;
   }
 
