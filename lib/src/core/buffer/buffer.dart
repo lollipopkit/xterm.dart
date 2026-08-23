@@ -9,7 +9,7 @@ import 'package:xterm/src/core/cursor.dart';
 import 'package:xterm/src/core/reflow.dart';
 import 'package:xterm/src/core/state.dart';
 import 'package:xterm/src/utils/circular_buffer.dart';
-import 'package:xterm/src/utils/unicode_v11.dart';
+import 'package:xterm/src/utils/unicode_width.dart';
 
 class Buffer {
   final TerminalState terminal;
@@ -116,7 +116,7 @@ class Buffer {
       codePoint = charset.translate(codePoint);
     }
 
-    var cellWidth = unicodeV11.wcwidth(codePoint);
+    var cellWidth = unicodeWidth.wcwidth(codePoint);
     if (cellWidth == 0 && codePoint != 0) {
       // The current cell storage model stores a single code point per cell and
       // cannot represent combining character sequences. Do not let zero-width

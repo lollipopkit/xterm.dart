@@ -5,7 +5,7 @@ import 'package:xterm/src/core/buffer/cell_offset.dart';
 import 'package:xterm/src/core/cell.dart';
 import 'package:xterm/src/core/cursor.dart';
 import 'package:xterm/src/utils/circular_buffer.dart';
-import 'package:xterm/src/utils/unicode_v11.dart';
+import 'package:xterm/src/utils/unicode_width.dart';
 
 const _cellSize = 4;
 
@@ -90,7 +90,7 @@ class BufferLine with IndexedItem {
   }
 
   void setCodePoint(int index, int char) {
-    final width = unicodeV11.wcwidth(char);
+    final width = unicodeWidth.wcwidth(char);
     setContent(index, char | (width << CellContent.widthShift));
   }
 
