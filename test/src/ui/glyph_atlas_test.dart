@@ -511,8 +511,8 @@ void _expectSameInk(Uint8List actual, Uint8List expected) {
 
     if (alpha == 255 || alpha == 0) {
       expect(
-        actual[i + 3],
-        alpha,
+        (actual[i + 3] - alpha).abs(),
+        lessThanOrEqualTo(_coverageTolerance),
         reason: 'pixel ${i ~/ 4} is covered differently',
       );
     }
@@ -527,6 +527,18 @@ void _expectSameInk(Uint8List actual, Uint8List expected) {
     }
   }
 }
+
+/// How far coverage may differ where the reference is fully on or fully off.
+///
+/// One step of 255, and only because the two rasterisers round a tinted blend
+/// in a different order: the atlas multiplies the glyph's coverage by the
+/// colour's alpha, and a faint cell makes that two multiplications instead of
+/// one. Measured across the parity cases on Impeller, every case is exact
+/// except the faint one, which is out by exactly this at two of three ratios.
+///
+/// It is not slack for a sprite in the wrong place. A glyph off by a pixel puts
+/// hundreds of alpha steps into an edge that should be blank.
+const _coverageTolerance = 1;
 
 /// How far a partially covered pixel may differ.
 ///

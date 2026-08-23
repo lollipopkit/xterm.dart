@@ -3,13 +3,18 @@
 #
 #   sh script/render_check.sh
 #
-# Everything else about the paint path is covered by `flutter test`, including
-# a pixel comparison of the two paths under a real font, a colour emoji, and a
-# device pixel ratio changing under a live painter. What is left for a device is
-# the part that runs on the device's own rasteriser: whether `drawRawAtlas` on
-# Impeller agrees with `drawParagraph` the way it does on the host. That is a
-# question about how it looks, so this prints the cases where it would look
-# wrong and says what wrong looks like.
+# The paint path is covered by tests, twice over: `flutter test` compares the
+# two paths pixel for pixel on the host, and
+#
+#   cd example
+#   flutter test integration_test/render_parity_test.dart -d macos
+#
+# makes the same comparison on the device's own rasteriser, which on macOS and
+# iOS is Impeller rather than the Skia the host tests use.
+#
+# This page is for what neither covers: how it looks to a person, over a whole
+# screen, in a font the tests do not have. Run it when something is reported
+# that the parity test does not reproduce.
 #
 # The page is self-comparing, and does not need a build from before the change
 # to compare against. A terminal draws a cell one of two ways, decided by
