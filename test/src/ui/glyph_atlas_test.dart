@@ -1,0 +1,321 @@
+import 'dart:typed_data';
+import 'dart:ui';
+
+import 'package:flutter/painting.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:xterm/src/terminal.dart';
+import 'package:xterm/src/ui/glyph_atlas.dart';
+import 'package:xterm/src/ui/painter.dart';
+import 'package:xterm/src/ui/terminal_text_style.dart';
+import 'package:xterm/src/ui/themes.dart';
+
+// The atlas rasterises a glyph once and tints it when it draws, where the
+// paragraph path lays the glyph out in its colour. That is not something the
+// draw calls can say anything about — it is a claim about pixels — so the tests
+// below render both and compare the images.
+//
+// Not byte for byte, and the reason is worth stating: the rasteriser adjusts a
+// glyph's contrast for the colour it is drawn in, so a white mask tinted red
+// has slightly different edge pixels from red text. It is confined to the
+// partially covered pixels, and no atlas can avoid it. What [_expectSameInk]
+// asserts is therefore the part that *is* exact — a pixel the reference covers
+// fully is the same colour, and a pixel it does not cover at all is untouched —
+// which is enough to catch the mistakes an atlas actually makes: a sprite off
+// by a pixel, at the wrong scale, or tinted with the wrong colour.
+//
+// It cannot check a real font. Every glyph here is the FlutterTest font's
+// identical box, with no overhang and no hinting. What it checks is the
+// arithmetic, at every device pixel ratio.
+
+void main() {
+  group('the atlas draws what the paragraph path drew', () {
+    // Every cell a colour of its own, so none of them coalesces into a run and
+    // all of them take the atlas.
+    const line =
+        '\x1b[38;2;255;0;0mA'
+        '\x1b[38;2;0;255;0mB'
+        '\x1b[38;2;0;0;255mC'
+        '\x1b[38;2;255;255;0mD';
+
+    const expected = [
+      (0, 'A', 0xFFFF0000),
+      (1, 'B', 0xFF00FF00),
+      (2, 'C', 0xFF0000FF),
+      (3, 'D', 0xFFFFFF00),
+    ];
+
+    for (final dpr in const [1.0, 2.0, 3.0]) {
+      test('at a device pixel ratio of $dpr', () async {
+        _expectSameInk(
+          await _paint(line, dpr: dpr),
+          await _reference(expected, dpr: dpr),
+        );
+      });
+    }
+
+    test('for a wide character, which spans two columns', () async {
+      _expectSameInk(
+        await _paint('\x1b[38;2;255;0;0m中', dpr: 2),
+        await _reference(const [(0, '中', 0xFFFF0000)], dpr: 2),
+      );
+    });
+
+    test('for a faint cell, whose colour is half transparent', () async {
+      // Tinting is a blend, so a colour that is not opaque is where the two
+      // paths would come apart.
+      _expectSameInk(
+        await _paint('\x1b[2m\x1b[38;2;255;0;0mA', dpr: 2),
+        await _reference(const [(0, 'A', 0x80FF0000)], dpr: 2),
+      );
+    });
+
+    test('and a blank reference does not pass', () async {
+      // [_expectSameInk] only constrains the pixels the reference covers, so a
+      // reference that covered none would pass against anything. This is what
+      // says it does not.
+      final reference = await _reference(expected, dpr: 1);
+
+      expect(
+        () => _expectSameInk(_blank(reference), reference),
+        throwsA(isA<TestFailure>()),
+      );
+    });
+
+    test('and a sprite one column out does not pass', () async {
+      final painted = await _paint(line, dpr: 1);
+      final shifted = await _reference(const [
+        (1, 'A', 0xFFFF0000),
+        (2, 'B', 0xFF00FF00),
+        (3, 'C', 0xFF0000FF),
+        (4, 'D', 0xFFFFFF00),
+      ], dpr: 1);
+
+      expect(
+        () => _expectSameInk(painted, shifted),
+        throwsA(isA<TestFailure>()),
+      );
+    });
+  });
+
+  group('GlyphAtlas', () {
+    late GlyphAtlas atlas;
+
+    setUp(() {
+      atlas = GlyphAtlas(
+        cellSize: const Size(8, 16),
+        devicePixelRatio: 2,
+        textScaler: TextScaler.noScaling,
+        styleFor: (_) => const TextStyle(fontSize: 13),
+      );
+    });
+
+    tearDown(() => atlas.dispose());
+
+    test('the same key twice is one entry', () {
+      final first = atlas.sprite((0x41, 0), 1);
+      final second = atlas.sprite((0x41, 0), 1);
+
+      expect(atlas.length, 1);
+      expect(second!.source, first!.source);
+    });
+
+    test('entries do not overlap', () {
+      final rects = [
+        for (var char = 0x41; char < 0x51; char++)
+          atlas.sprite((char, 0), 1)!.source,
+      ];
+
+      for (var i = 0; i < rects.length; i++) {
+        for (var j = i + 1; j < rects.length; j++) {
+          expect(
+            rects[i].overlaps(rects[j]),
+            isFalse,
+            reason: '${rects[i]} overlaps ${rects[j]}',
+          );
+        }
+      }
+    });
+
+    test('a slot carries a cell of padding either side', () {
+      final narrow = atlas.sprite((0x41, 0), 1)!;
+      final wide = atlas.sprite((0x4E00, 0), 2)!;
+
+      // Cell width 8 at a ratio of 2 is 16 device pixels, and the padding is
+      // measured in those.
+      expect(narrow.source.width, (1 + 2 * GlyphAtlas.padding) * 16);
+      expect(wide.source.width, (2 + 2 * GlyphAtlas.padding) * 16);
+      expect(narrow.dxOffset, GlyphAtlas.padding * 16);
+    });
+
+    test('the pen wraps rather than running off the edge', () {
+      // Enough glyphs to fill more than one shelf: 2048 wide, 48 to a slot.
+      for (var char = 0x41; char < 0x41 + 60; char++) {
+        final sprite = atlas.sprite((char, 0), 1);
+        expect(sprite, isNotNull);
+        expect(sprite!.source.right, lessThanOrEqualTo(GlyphAtlas.maxDimension));
+      }
+
+      expect(atlas.length, 60);
+    });
+
+    test('a code point drawn in colour is refused', () {
+      expect(atlas.sprite((0x1F600, 0), 2), isNull);
+      expect(atlas.length, 0);
+    });
+
+    test('the image grows only when a glyph is added', () {
+      atlas.sprite((0x41, 0), 1);
+      final first = atlas.image;
+
+      atlas.sprite((0x41, 0), 1);
+      expect(identical(atlas.image, first), isTrue);
+
+      atlas.sprite((0x42, 0), 1);
+      expect(identical(atlas.image, first), isFalse);
+    });
+
+    test('the image is null until something is in it', () {
+      expect(atlas.image, isNull);
+    });
+
+    test('clearing empties it', () {
+      atlas.sprite((0x41, 0), 1);
+      atlas.clear();
+
+      expect(atlas.length, 0);
+      expect(atlas.image, isNull);
+    });
+  });
+}
+
+/// Renders one line through the painter and returns its pixels.
+Future<Uint8List> _paint(
+  String input, {
+  required double dpr,
+  int columns = 8,
+}) async {
+  final terminal = Terminal(maxLines: 4);
+  terminal.resize(columns, 2);
+  terminal.write(input);
+
+  final painter = _painter(dpr);
+
+  return _record(painter, dpr, columns, (canvas) {
+    painter.paintLine(canvas, Offset.zero, terminal.buffer.lines[0]);
+  });
+}
+
+/// Renders [cells] the way the painter's paragraph path would, as the image the
+/// atlas has to reproduce.
+///
+/// Written out rather than derived from the painter: a reference that shares
+/// the code under test agrees with it by construction. What each cell's colour
+/// should be is asserted separately, in painter_test.dart.
+///
+/// The columns are snapped to whole device pixels, because that is what the
+/// atlas does and it is deliberate — see [GlyphAtlas]. Comparing against an
+/// unsnapped reference would be asserting that a glyph atlas does not round,
+/// which is the one thing every glyph atlas does.
+Future<Uint8List> _reference(
+  List<(int, String, int)> cells, {
+  required double dpr,
+  int columns = 8,
+}) async {
+  final painter = _painter(dpr);
+
+  return _record(painter, dpr, columns, (canvas) {
+    for (final (column, text, argb) in cells) {
+      final style = painter.textStyle.toTextStyle(color: Color(argb));
+      final builder = ParagraphBuilder(style.getParagraphStyle())
+        ..pushStyle(style.getTextStyle(textScaler: painter.textScaler))
+        ..addText(text);
+
+      final paragraph = builder.build()
+        ..layout(const ParagraphConstraints(width: double.infinity));
+
+      canvas.drawParagraph(
+        paragraph,
+        Offset(
+          (column * painter.cellSize.width * dpr).roundToDouble() / dpr,
+          0,
+        ),
+      );
+      paragraph.dispose();
+    }
+  });
+}
+
+TerminalPainter _painter(double dpr) {
+  return TerminalPainter(
+    theme: TerminalThemes.defaultTheme,
+    textStyle: const TerminalStyle(),
+    textScaler: TextScaler.noScaling,
+    devicePixelRatio: dpr,
+  );
+}
+
+Future<Uint8List> _record(
+  TerminalPainter painter,
+  double dpr,
+  int columns,
+  void Function(Canvas) draw,
+) async {
+  final recorder = PictureRecorder();
+  final canvas = Canvas(recorder);
+  canvas.scale(dpr);
+  draw(canvas);
+
+  final picture = recorder.endRecording();
+  final image = await picture.toImage(
+    (painter.cellSize.width * columns * dpr).ceil(),
+    (painter.cellSize.height * dpr).ceil(),
+  );
+  picture.dispose();
+
+  final bytes = await image.toByteData();
+  image.dispose();
+
+  return bytes!.buffer.asUint8List();
+}
+
+/// Asserts [actual] draws the same ink as [expected], allowing for the one
+/// difference tinting a mask cannot avoid.
+///
+/// Coverage is what a sprite in the wrong place or at the wrong size gets
+/// wrong, so a pixel the reference leaves untouched has to be untouched and one
+/// it covers fully has to be covered fully. Colour may differ by the contrast
+/// adjustment, which is a blend and so reaches even a pixel two glyphs together
+/// cover completely.
+void _expectSameInk(Uint8List actual, Uint8List expected) {
+  expect(actual, hasLength(expected.length));
+
+  for (var i = 0; i < expected.length; i += 4) {
+    final alpha = expected[i + 3];
+
+    if (alpha == 255 || alpha == 0) {
+      expect(
+        actual[i + 3],
+        alpha,
+        reason: 'pixel ${i ~/ 4} is covered differently',
+      );
+    }
+
+    for (var channel = 0; channel < 4; channel++) {
+      expect(
+        (actual[i + channel] - expected[i + channel]).abs(),
+        lessThanOrEqualTo(_contrastTolerance),
+        reason: 'pixel ${i ~/ 4} channel $channel is further out than the '
+            'contrast adjustment accounts for',
+      );
+    }
+  }
+}
+
+/// How far a partially covered pixel may differ. Measured at 43 of 255 for the
+/// test font; the round number above it is there so a small change in how
+/// Flutter rasterises text does not fail the suite, while a sprite drawn in the
+/// wrong colour or at the wrong scale still does.
+const _contrastTolerance = 64;
+
+/// [pixels] with nothing drawn, for the test that says a blank image fails.
+Uint8List _blank(Uint8List pixels) => Uint8List(pixels.length);

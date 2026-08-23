@@ -22,10 +22,15 @@ class AtlasSprite {
   /// The sprite's rect in atlas pixels.
   final Rect source;
 
-  /// How far left of the cell's own left edge the sprite starts, in logical
+  /// How far left of the cell's own left edge the sprite starts, in *device*
   /// pixels. This is [GlyphAtlas.padding] wide, and it is what lets an italic
   /// or a fallback font's glyph spill outside its column the way it does when
   /// the paragraph is drawn straight to the canvas.
+  ///
+  /// Device pixels and a whole number of them, because that is what keeps a
+  /// sprite crisp: the glyph is rasterised at a whole pixel inside the atlas
+  /// and drawn to a whole pixel on screen, so it is copied rather than
+  /// resampled. See [GlyphAtlas].
   final double dxOffset;
 }
 
@@ -36,6 +41,21 @@ class AtlasSprite {
 /// leaves a solid silhouette. [wants] is where that is decided, from the
 /// Unicode `Emoji_Presentation` property, and a glyph it turns down keeps the
 /// painter's paragraph path.
+///
+/// Tinting a mask is not quite the same as laying the glyph out in its colour.
+/// The rasteriser adjusts a glyph's contrast for the colour it is being drawn
+/// in, so a white mask tinted red has edge pixels a little different from red
+/// text. It is confined to partially covered pixels, and every renderer that
+/// keeps a glyph atlas has it; `glyph_atlas_test.dart` is written around the
+/// distinction.
+///
+/// Everything the atlas measures is in whole device pixels: the slots, the
+/// padding, and the position a sprite is drawn at. A glyph rasterised at a
+/// fractional offset and then drawn to a different fractional offset is
+/// resampled, and text that has been through that twice is visibly soft. The
+/// cost is that a cell's glyph can sit up to half a device pixel from where
+/// laying the paragraph out at the exact column would have put it, which at any
+/// ratio a display uses is less than the rounding the rasteriser does anyway.
 ///
 /// The image is rebuilt whole whenever a glyph is added, because an [Image] is
 /// immutable. That is affordable because a terminal's glyph set converges: the
@@ -85,10 +105,16 @@ class GlyphAtlas {
   var _penX = 0.0;
   var _penY = 0.0;
 
-  double get _slotHeight => _cellSize.height * _devicePixelRatio;
+  /// The padding either side of a glyph, in whole device pixels.
+  late final double _padding =
+      (padding * _cellSize.width * _devicePixelRatio).roundToDouble();
+
+  late final double _slotHeight =
+      (_cellSize.height * _devicePixelRatio).ceilToDouble();
 
   double _slotWidth(int cells) {
-    return (cells + 2 * padding) * _cellSize.width * _devicePixelRatio;
+    return (cells * _cellSize.width * _devicePixelRatio).ceilToDouble() +
+        2 * _padding;
   }
 
   /// How many sprites the atlas holds. For tests and for the benchmark.
@@ -133,7 +159,7 @@ class GlyphAtlas {
 
     final sprite = AtlasSprite(
       Rect.fromLTWH(_penX, _penY, width, _slotHeight),
-      padding * _cellSize.width,
+      _padding,
     );
     _penX += width;
 
@@ -167,10 +193,12 @@ class GlyphAtlas {
 
     for (final key in _order) {
       final sprite = _sprites[key]!;
+      // Both components are whole device pixels, and the canvas is scaled by
+      // the ratio, so the glyph is rasterised at a whole pixel of the image.
       canvas.drawParagraph(
         _paragraphs[key]!,
         Offset(
-          sprite.source.left / _devicePixelRatio + sprite.dxOffset,
+          (sprite.source.left + sprite.dxOffset) / _devicePixelRatio,
           sprite.source.top / _devicePixelRatio,
         ),
       );

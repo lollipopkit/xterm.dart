@@ -1,7 +1,10 @@
+import 'dart:typed_data';
+
 import 'package:flutter/painting.dart';
 
 import 'package:flutter/rendering.dart';
 import 'package:xterm/src/ui/char_metrics.dart';
+import 'package:xterm/src/ui/glyph_atlas.dart';
 import 'package:xterm/src/ui/palette_builder.dart';
 import 'package:xterm/src/ui/paragraph_cache.dart';
 import 'package:xterm/xterm.dart';
@@ -17,9 +20,11 @@ class TerminalPainter {
     required TerminalTheme theme,
     required TerminalStyle textStyle,
     required TextScaler textScaler,
+    double devicePixelRatio = 1.0,
   }) : _textStyle = textStyle,
        _theme = theme,
-       _textScaler = textScaler;
+       _textScaler = textScaler,
+       _devicePixelRatio = devicePixelRatio;
 
   /// A lookup table from terminal colors to Flutter colors.
   late var _colorPalette = PaletteBuilder(_theme).build();
@@ -65,6 +70,38 @@ class TerminalPainter {
   /// Reused across [Paint] calls; only its colour changes.
   final _backgroundPaint = Paint();
 
+  /// Sprites for the cells a run could not absorb, rasterised once without a
+  /// colour and tinted per cell when drawn.
+  ///
+  /// This is deliberately not used for cells that *do* coalesce. A run already
+  /// draws its whole span in one call, where the atlas would write a sprite per
+  /// cell into the arrays below; for a screen of plain text that is more work,
+  /// not less. What the atlas fixes is the case coalescing cannot reach — a
+  /// cell whose neighbours differ, or a wide character, which under the
+  /// paragraph cache needs a layout keyed by its colour as well as its glyph.
+  /// A screen where every cell has a colour of its own then misses the cache on
+  /// every cell of every frame: 134 ms a frame at 240x70, against 1.1 ms
+  /// through the atlas. A screen of CJK, where no cell ever joins a run, goes
+  /// from 1.6 ms to 0.6 ms. Colour is not part of an atlas key, so the working
+  /// set is the glyph set, which is small.
+  GlyphAtlas? _atlas;
+
+  /// [Canvas.drawRawAtlas] arguments for the line being painted, filled to
+  /// [_spriteCount] and grown by doubling. Reused between lines: the terminal
+  /// paints one line at a time on one thread, as [paintLine] already assumes.
+  ///
+  /// [FilterQuality.none] rather than a default: a sprite is drawn at exactly
+  /// the size and offset it was rasterised at, so nearest sampling reproduces
+  /// its pixels, where filtering would resample and soften every glyph on
+  /// screen.
+  var _spriteTransforms = Float32List(_initialSprites * 4);
+  var _spriteRects = Float32List(_initialSprites * 4);
+  var _spriteColors = Int32List(_initialSprites);
+  var _spriteCount = 0;
+  final _atlasPaint = Paint()..filterQuality = FilterQuality.none;
+
+  static const _initialSprites = 256;
+
   /// Run kinds, [_runKind] of a style and a character class, whose glyphs do
   /// not advance by exactly one cell, found by measuring a run against the grid
   /// in [_flushRun]. Coalescing is abandoned for these, permanently until the
@@ -81,6 +118,16 @@ class TerminalPainter {
       CellFlags.underline |
       CellFlags.strikethrough |
       CellFlags.overline;
+
+  /// The flags that draw a line across the cell rather than a glyph inside it,
+  /// and so keep a cell off the atlas.
+  ///
+  /// A decoration covers the character's advance exactly. Drawn per cell out of
+  /// an atlas, two neighbours' underlines meet at a boundary that rounding can
+  /// leave a gap in; drawn as a run they are one unbroken line. Runs are also
+  /// where decorated text already goes, so this costs nothing.
+  static const _decorationFlags =
+      CellFlags.underline | CellFlags.strikethrough | CellFlags.overline;
 
   /// Turned off on runs, and only on runs. A ligature would draw two cells'
   /// characters as one glyph of its own width, which puts the rest of the run
@@ -136,6 +183,17 @@ class TerminalPainter {
     _clearFontDependentCaches();
   }
 
+  /// The ratio the atlas rasterises at, so its sprites land on whole device
+  /// pixels and can be sampled without filtering. Nothing else reads it: the
+  /// grid is laid out in logical pixels.
+  double get devicePixelRatio => _devicePixelRatio;
+  double _devicePixelRatio;
+  set devicePixelRatio(double value) {
+    if (value == _devicePixelRatio) return;
+    _devicePixelRatio = value;
+    _discardAtlas();
+  }
+
   TerminalTheme get theme => _theme;
   TerminalTheme _theme;
   set theme(TerminalTheme value) {
@@ -168,6 +226,7 @@ class TerminalPainter {
   /// [_uncoalescableKinds] is a verdict about the *font*, so it survives a
   /// theme change and only these three paths reset it.
   void _clearFontDependentCaches() {
+    _discardAtlas();
     _glyphCache.clear();
     _runCache.clear();
     _clusterCache.clear();
@@ -244,6 +303,7 @@ class TerminalPainter {
   }) {
     _paintBackgrounds(canvas, offset, line, reverseDisplay);
     _paintForegrounds(canvas, offset, line, reverseDisplay);
+    _flushSprites(canvas);
   }
 
   /// Fills each maximal span of cells sharing a background colour with one
@@ -383,6 +443,7 @@ class TerminalPainter {
           _glyphChar(charCode, layoutFlags),
           argb,
           layoutFlags,
+          cells: content >> CellContent.widthShift,
         );
         continue;
       }
@@ -492,7 +553,11 @@ class TerminalPainter {
       _glyphChar(charCode, layoutFlags),
       argb,
       layoutFlags,
+      cells: cellData.content >> CellContent.widthShift,
     );
+
+    // Unlike [paintLine] there is no line to flush at the end of.
+    _flushSprites(canvas);
   }
 
   /// Draws one cell whose text is [text], a base character and the marks that
@@ -523,14 +588,35 @@ class TerminalPainter {
     canvas.drawParagraph(paragraph, offset);
   }
 
+  /// Draws one cell's glyph at [offset], through the atlas where it can and a
+  /// laid out [Paragraph] otherwise.
+  ///
+  /// [cells] is how many columns the glyph occupies, which the atlas needs
+  /// because a sprite is placed by its own width rather than by the grid.
   @pragma('vm:prefer-inline')
   void _paintGlyph(
     Canvas canvas,
     Offset offset,
     int charCode,
     int argb,
-    int layoutFlags,
-  ) {
+    int layoutFlags, {
+    int cells = 1,
+  }) {
+    if (layoutFlags & _decorationFlags == 0) {
+      final atlas = _atlas ??= GlyphAtlas(
+        cellSize: _cellSize,
+        devicePixelRatio: _devicePixelRatio,
+        textScaler: _textScaler,
+        styleFor: (flags) => _styleFor(_opaqueWhite, flags),
+      );
+
+      final sprite = atlas.sprite((charCode, layoutFlags), cells);
+      if (sprite != null) {
+        _addSprite(sprite, offset, argb);
+        return;
+      }
+    }
+
     final key = (charCode, argb, layoutFlags);
     final paragraph =
         _glyphCache.getLayoutFromCache(key) ??
@@ -542,6 +628,94 @@ class TerminalPainter {
         );
 
     canvas.drawParagraph(paragraph, offset);
+  }
+
+  /// The colour the atlas rasterises in. Opaque, so a sprite's alpha is the
+  /// glyph's coverage and nothing else, which is what the tint needs.
+  static const _opaqueWhite = 0xFFFFFFFF;
+
+  @pragma('vm:prefer-inline')
+  void _addSprite(AtlasSprite sprite, Offset offset, int argb) {
+    if (_spriteCount == _spriteColors.length) {
+      _growSpriteBuffers();
+    }
+
+    final i = _spriteCount++;
+    final at = i * 4;
+
+    // No rotation, and a scale that undoes the ratio the sprite was rasterised
+    // at, so it covers the same device pixels it was drawn into.
+    //
+    // The destination is rounded to a whole device pixel first. The sprite is
+    // a whole number of pixels holding a glyph rasterised at a whole pixel, so
+    // landing it on one is a copy; landing it between two is a resample, and
+    // the difference is the whole reason a terminal's text looks sharp or
+    // soft. A cell can end up half a device pixel from its exact column, which
+    // is smaller than the step the rasteriser would have rounded it to.
+    _spriteTransforms[at] = 1 / _devicePixelRatio;
+    _spriteTransforms[at + 1] = 0;
+    _spriteTransforms[at + 2] =
+        ((offset.dx * _devicePixelRatio).roundToDouble() - sprite.dxOffset) /
+        _devicePixelRatio;
+    _spriteTransforms[at + 3] =
+        (offset.dy * _devicePixelRatio).roundToDouble() / _devicePixelRatio;
+
+    final source = sprite.source;
+    _spriteRects[at] = source.left;
+    _spriteRects[at + 1] = source.top;
+    _spriteRects[at + 2] = source.right;
+    _spriteRects[at + 3] = source.bottom;
+
+    _spriteColors[i] = argb;
+  }
+
+  /// Draws the sprites collected for the line, if any.
+  ///
+  /// They land above the paragraphs drawn on the way through the line, rather
+  /// than interleaved with them. Only a glyph reaching outside its own column
+  /// can tell, and the atlas is what draws the ordinary cells, so this puts the
+  /// exception underneath rather than the rule.
+  void _flushSprites(Canvas canvas) {
+    if (_spriteCount == 0) return;
+
+    final count = _spriteCount;
+    _spriteCount = 0;
+
+    final image = _atlas?.image;
+    if (image == null) return;
+
+    canvas.drawRawAtlas(
+      image,
+      Float32List.sublistView(_spriteTransforms, 0, count * 4),
+      Float32List.sublistView(_spriteRects, 0, count * 4),
+      Int32List.sublistView(_spriteColors, 0, count),
+      // The sprite is the source and the colour the destination, so this reads
+      // "keep the colour where the glyph covers". `srcIn`, which is the way
+      // round it looks like it should be, draws the sprite untinted.
+      BlendMode.dstIn,
+      null,
+      _atlasPaint,
+    );
+  }
+
+  void _growSpriteBuffers() {
+    final size = _spriteColors.length * 2;
+    _spriteTransforms = Float32List(size * 4)..setAll(0, _spriteTransforms);
+    _spriteRects = Float32List(size * 4)..setAll(0, _spriteRects);
+    _spriteColors = Int32List(size)..setAll(0, _spriteColors);
+  }
+
+  void _discardAtlas() {
+    _atlas?.dispose();
+    _atlas = null;
+    _spriteCount = 0;
+  }
+
+  /// Releases the atlas texture. The paragraph caches are left alone: a
+  /// [Paragraph] recorded into a [Picture] is kept alive by it, and disposing
+  /// one the compositor may still be holding is not this class's call to make.
+  void dispose() {
+    _discardAtlas();
   }
 
   /// Which class of run [charCode] may join, or -1 if it has to be drawn on its

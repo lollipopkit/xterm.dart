@@ -9,7 +9,10 @@
 // Flutter engine.
 //
 // What is measured: the time to *record* a screenful of paint operations, and
-// the number of `drawParagraph` and `drawRect` calls that recording issues.
+// how many draws that recording issues. `glyphs` counts cells, whether each
+// reached the canvas inside a coalesced paragraph or as a sprite in the line's
+// atlas batch; `calls` counts the draws themselves, which is the quantity the
+// two together are meant to keep down.
 // GPU rasterisation is deliberately not measured: forcing it from a test
 // needs an async `toByteData` round trip whose cost is dominated by the
 // readback rather than by the drawing. Draw-call count is the quantity the
@@ -21,6 +24,7 @@
 // ratio between a change and its baseline, not the absolute milliseconds.
 
 import 'dart:math';
+import 'dart:typed_data';
 import 'dart:ui';
 
 import 'package:flutter/painting.dart';
@@ -51,7 +55,8 @@ void main() {
       // ignore: avoid_print
       print(
         '${'profile'.padRight(14)}'
-        '${'paragraphs'.padLeft(11)}'
+        '${'glyphs'.padLeft(8)}'
+        '${'calls'.padLeft(8)}'
         '${'rects'.padLeft(8)}'
         '${'ms/frame'.padLeft(10)}',
       );
@@ -61,7 +66,8 @@ void main() {
         // ignore: avoid_print
         print(
           '${profile.name.padRight(14)}'
-          '${result.paragraphs.toString().padLeft(11)}'
+          '${result.glyphs.toString().padLeft(8)}'
+          '${result.calls.toString().padLeft(8)}'
           '${result.rects.toString().padLeft(8)}'
           '${result.msPerFrame.toStringAsFixed(3).padLeft(10)}',
         );
@@ -72,12 +78,18 @@ void main() {
 
 class _Result {
   const _Result({
-    required this.paragraphs,
+    required this.glyphs,
+    required this.calls,
     required this.rects,
     required this.msPerFrame,
   });
 
-  final int paragraphs;
+  /// Cells that reached the canvas, however they got there.
+  final int glyphs;
+
+  /// Draw calls that carried them.
+  final int calls;
+
   final int rects;
   final double msPerFrame;
 }
@@ -111,7 +123,8 @@ _Result _run(_Profile profile, int cols, int rows) {
   sw.stop();
 
   return _Result(
-    paragraphs: counting.paragraphs,
+    glyphs: counting.glyphs,
+    calls: counting.calls,
     rects: counting.rects,
     msPerFrame: sw.elapsedMicroseconds / _measuredFrames / 1000,
   );
@@ -143,22 +156,47 @@ void _paintFrame(
 /// Counts the draw calls the painter issues, forwarding each to a real canvas
 /// so the recorded picture stays representative.
 ///
-/// [paintLine] only reaches `drawRect` and `drawParagraph`; everything else on
-/// [Canvas] goes to [noSuchMethod] and would throw, which is the intent. A
-/// painter that starts using another primitive should fail here rather than
-/// silently go uncounted.
+/// [paintLine] only reaches `drawRect`, `drawParagraph` and `drawRawAtlas`;
+/// everything else on [Canvas] goes to [noSuchMethod] and would throw, which is
+/// the intent. A painter that starts using another primitive should fail here
+/// rather than silently go uncounted.
 class _CountingCanvas implements Canvas {
   _CountingCanvas(this._inner);
 
   final Canvas _inner;
 
-  var paragraphs = 0;
+  var glyphs = 0;
+  var calls = 0;
   var rects = 0;
 
   @override
   void drawParagraph(Paragraph paragraph, Offset offset) {
-    paragraphs++;
+    glyphs++;
+    calls++;
     _inner.drawParagraph(paragraph, offset);
+  }
+
+  @override
+  void drawRawAtlas(
+    Image atlas,
+    Float32List rstTransforms,
+    Float32List rects,
+    Int32List? colors,
+    BlendMode? blendMode,
+    Rect? cullRect,
+    Paint paint,
+  ) {
+    glyphs += rects.length ~/ 4;
+    calls++;
+    _inner.drawRawAtlas(
+      atlas,
+      rstTransforms,
+      rects,
+      colors,
+      blendMode,
+      cullRect,
+      paint,
+    );
   }
 
   @override

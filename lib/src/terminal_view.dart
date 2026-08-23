@@ -337,6 +337,9 @@ class TerminalViewState extends State<TerminalView>
                         textScaler:
                             widget.textScaler ??
                             MediaQuery.textScalerOf(context),
+                        devicePixelRatio: MediaQuery.devicePixelRatioOf(
+                          context,
+                        ),
                         theme: widget.theme,
                         focusNode: _focusNode,
                         cursorType: widget.cursorType,
@@ -728,6 +731,7 @@ class _TerminalView extends LeafRenderObjectWidget {
     required this.autoResize,
     required this.textStyle,
     required this.textScaler,
+    required this.devicePixelRatio,
     required this.theme,
     required this.focusNode,
     required this.cursorType,
@@ -752,6 +756,8 @@ class _TerminalView extends LeafRenderObjectWidget {
   final TerminalStyle textStyle;
 
   final TextScaler textScaler;
+
+  final double devicePixelRatio;
 
   final TerminalTheme theme;
 
@@ -781,6 +787,7 @@ class _TerminalView extends LeafRenderObjectWidget {
       autoResize: autoResize,
       textStyle: textStyle,
       textScaler: textScaler,
+      devicePixelRatio: devicePixelRatio,
       theme: theme,
       focusNode: focusNode,
       cursorType: cursorType,
@@ -803,6 +810,7 @@ class _TerminalView extends LeafRenderObjectWidget {
       ..autoResize = autoResize
       ..textStyle = textStyle
       ..textScaler = textScaler
+      ..devicePixelRatio = devicePixelRatio
       ..theme = theme
       ..focusNode = focusNode
       ..cursorType = cursorType

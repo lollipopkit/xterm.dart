@@ -29,6 +29,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     required bool autoResize,
     required TerminalStyle textStyle,
     required TextScaler textScaler,
+    double devicePixelRatio = 1.0,
     required TerminalTheme theme,
     required FocusNode focusNode,
     required TerminalCursorType cursorType,
@@ -55,6 +56,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
          theme: theme,
          textStyle: textStyle,
          textScaler: textScaler,
+         devicePixelRatio: devicePixelRatio,
        );
 
   Terminal _terminal;
@@ -109,6 +111,14 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     if (value == _painter.textScaler) return;
     _painter.textScaler = value;
     markNeedsLayout();
+  }
+
+  /// Only the glyph atlas reads this, so a change repaints without relaying
+  /// out: the grid is measured in logical pixels and does not move.
+  set devicePixelRatio(double value) {
+    if (value == _painter.devicePixelRatio) return;
+    _painter.devicePixelRatio = value;
+    markNeedsPaint();
   }
 
   set theme(TerminalTheme value) {
@@ -221,6 +231,12 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     _terminal.removeListener(_onTerminalChange);
     _controller.removeListener(_onControllerUpdate);
     _focusNode.removeListener(_onFocusChange);
+  }
+
+  @override
+  void dispose() {
+    _painter.dispose();
+    super.dispose();
   }
 
   @override
