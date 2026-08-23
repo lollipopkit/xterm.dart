@@ -69,6 +69,39 @@ void main() {
     });
   });
 
+  group('emoji presentation', () {
+    // The renderer rasterises a glyph once without a colour and tints it when
+    // it draws, so a code point a font draws in colour has to stay off that
+    // path or it comes out as a solid silhouette.
+    const colour = {
+      0x1F600: 'grinning face',
+      0x231A: 'watch, which is Emoji_Presentation and below U+2500',
+      0x2B50: 'star',
+      0x1F3FD: 'medium skin tone modifier',
+      0x1F1E8: 'regional indicator C',
+    };
+    const notColour = {
+      0x41: 'A',
+      0x4E00: 'a CJK ideograph',
+      0x2500: 'a box drawing character',
+      0x2764: 'heavy black heart, which needs U+FE0F to be an emoji',
+      0x0301: 'a combining acute',
+      0x2122: 'the trade mark sign',
+    };
+
+    colour.forEach((codePoint, name) {
+      test('$name is drawn in colour', () {
+        expect(unicodeWidth.hasEmojiPresentation(codePoint), isTrue);
+      });
+    });
+
+    notColour.forEach((codePoint, name) {
+      test('$name is not', () {
+        expect(unicodeWidth.hasEmojiPresentation(codePoint), isFalse);
+      });
+    });
+  });
+
   group('the tables agree with each other', () {
     test('nothing is both zero-width and wide', () {
       // A code point in both would take whichever `buildTable` filled last,
@@ -89,7 +122,14 @@ void main() {
     });
 
     test('every range is ascending and disjoint from the next', () {
-      for (final table in [BMP_COMBINING, HIGH_COMBINING, BMP_WIDE, HIGH_WIDE]) {
+      for (final table in [
+        BMP_COMBINING,
+        HIGH_COMBINING,
+        BMP_WIDE,
+        HIGH_WIDE,
+        BMP_EMOJI_PRESENTATION,
+        HIGH_EMOJI_PRESENTATION,
+      ]) {
         for (var i = 0; i < table.length; i++) {
           expect(table[i][0], lessThanOrEqualTo(table[i][1]));
           if (i > 0) {
