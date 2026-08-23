@@ -64,6 +64,7 @@ class TerminalStyle {
     bool underline = false,
     bool strikethrough = false,
     bool overline = false,
+    List<FontFeature>? fontFeatures,
   }) {
     final decorations = <TextDecoration>[];
     if (underline) {
@@ -89,6 +90,7 @@ class TerminalStyle {
           ? TextDecoration.none
           : TextDecoration.combine(decorations),
       letterSpacing: letterSpacing,
+      fontFeatures: fontFeatures,
     );
   }
 
