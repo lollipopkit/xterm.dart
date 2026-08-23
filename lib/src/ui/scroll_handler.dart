@@ -122,11 +122,13 @@ class _TerminalScrollGestureHandlerState
   }
 
   /// Send a single scroll event to the terminal. The event is first offered to
-  /// terminal mouse reporting. If it is not handled and [simulateScroll] is
-  /// enabled, this falls back to sending
-  /// up/down arrow keys — but only when the application has NOT enabled mouse
-  /// mode (to avoid sending unintended arrow keys to apps expecting mouse
-  /// events).
+  /// terminal mouse reporting, and if that does not consume it and
+  /// [simulateScroll] is enabled, this falls back to sending up/down arrow
+  /// keys.
+  ///
+  /// The fallback is decided by whether `mouseInput` reported the wheel, not by
+  /// whether mouse mode is on. An application can have mouse mode enabled in a
+  /// form that does not report scrolling, and it still gets the arrow keys.
   void _sendScrollEvent(bool up) {
     final position = widget.getCellOffset(lastPointerPosition);
     final handled = widget.terminal.mouseInput(

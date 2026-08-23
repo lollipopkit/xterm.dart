@@ -10,7 +10,7 @@
 //
 // What is measured: the time to *record* a screenful of paint operations, and
 // the number of `drawParagraph` and `drawRect` calls that recording issues.
-// GPU rasterisation is deliberately not measured — forcing it from a test
+// GPU rasterisation is deliberately not measured: forcing it from a test
 // needs an async `toByteData` round trip whose cost is dominated by the
 // readback rather than by the drawing. Draw-call count is the quantity the
 // rendering issues are about, and it is exact rather than sampled.
@@ -144,7 +144,7 @@ void _paintFrame(
 /// so the recorded picture stays representative.
 ///
 /// [paintLine] only reaches `drawRect` and `drawParagraph`; everything else on
-/// [Canvas] goes to [noSuchMethod] and would throw, which is the intent — a
+/// [Canvas] goes to [noSuchMethod] and would throw, which is the intent. A
 /// painter that starts using another primitive should fail here rather than
 /// silently go uncounted.
 class _CountingCanvas implements Canvas {
@@ -273,7 +273,7 @@ void _writeCjk(Terminal terminal, int cols, int rows) {
 
 /// Every cell a distinct foreground colour, so no two adjacent cells can be
 /// coalesced and the paragraph cache cannot hold a screen. The pathological
-/// case — a change that helps here helps everywhere.
+/// case: a change that helps here helps everywhere.
 void _writeUnique(Terminal terminal, int cols, int rows) {
   final rng = Random(5);
   for (var y = 0; y < rows; y++) {

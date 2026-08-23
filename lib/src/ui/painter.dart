@@ -38,17 +38,27 @@ class TerminalPainter {
   /// Laid out single glyphs, for cells a run cannot absorb. Should be cleared
   /// when the same cell no longer produces the same visual output. For example,
   /// when [_textStyle] is changed, or when the system font changes.
-  final _glyphCache = ParagraphCache<GlyphKey>(10240);
+  ///
+  /// The two caches split one budget rather than each having their own, since a
+  /// [Paragraph] holds native memory that [ParagraphCache] does not release on
+  /// eviction. A run's paragraph holds more of it than a glyph's, so counting
+  /// them against the same total is already generous to runs.
+  final _glyphCache = ParagraphCache<GlyphKey>(8192);
 
   /// Laid out runs of cells. Smaller than [_glyphCache] because each entry
   /// covers many cells, and because a run's text is far less repetitive than a
   /// single character.
-  final _runCache = ParagraphCache<RunKey>(4096);
+  ///
+  /// Not smaller than this, though. A screen of short differently coloured runs
+  /// has a working set in the low thousands, and at 1024 it thrashes: the
+  /// `colored` profile of the paint benchmark goes from 0.95 ms a frame to
+  /// 17.8 ms.
+  final _runCache = ParagraphCache<RunKey>(2048);
 
   /// Reused across [Paint] calls; only its colour changes.
   final _backgroundPaint = Paint();
 
-  /// Run kinds — [_runKind] of a style and a character class — whose glyphs do
+  /// Run kinds, [_runKind] of a style and a character class, whose glyphs do
   /// not advance by exactly one cell, found by measuring a run against the grid
   /// in [_flushRun]. Coalescing is abandoned for these, permanently until the
   /// font changes.
@@ -57,7 +67,7 @@ class TerminalPainter {
   /// The [CellFlags] that reach [TerminalStyle.toTextStyle] and so change the
   /// laid out glyph. The rest either resolve into the colour (`faint`,
   /// `inverse`), stop the cell being painted at all (`invisible`), or are not
-  /// rendered (`blink`) — see [GlyphKey].
+  /// rendered (`blink`). See [GlyphKey].
   static const _layoutFlags =
       CellFlags.bold |
       CellFlags.italic |
@@ -67,7 +77,7 @@ class TerminalPainter {
 
   /// Turned off on runs, and only on runs. A ligature would draw two cells'
   /// characters as one glyph of its own width, which puts the rest of the run
-  /// off its columns — and the terminal's own idea of the cursor column does
+  /// off its columns, and the terminal's own idea of the cursor column does
   /// not change to match. Single glyphs have no neighbours to join with, so
   /// they are laid out exactly as before.
   static const _noLigatures = [
@@ -215,8 +225,8 @@ class TerminalPainter {
   /// 0, and the y offset is the top of the line.
   ///
   /// Backgrounds are painted for the whole line before any glyph is. Painting
-  /// cell by cell used to interleave them, so a glyph wider than its cell —
-  /// italic, or a fallback font's — was clipped by the next cell's background.
+  /// cell by cell used to interleave them, so a glyph wider than its cell,
+  /// italic or a fallback font's, was clipped by the next cell's background.
   void paintLine(
     Canvas canvas,
     Offset offset,
@@ -232,8 +242,9 @@ class TerminalPainter {
   ///
   /// Cells are compared by the raw field their colour comes from rather than by
   /// the resolved [Color], which keeps this from allocating one per cell. The
-  /// cost is that a span can be split where it did not have to be — an inverse
-  /// cell and a plain one can resolve to the same colour by different routes —
+  /// cost is that a span can be split where it did not have to be, since an
+  /// inverse cell and a plain one can resolve to the same colour by different
+  /// routes,
   /// which draws one extra rect and nothing else.
   void _paintBackgrounds(
     Canvas canvas,
@@ -305,8 +316,8 @@ class TerminalPainter {
   ///
   /// A cell joins a run only if it is one column wide and ASCII printable.
   /// Those are the characters a monospace font is relied on to advance exactly
-  /// one cell for; anything else — a wide character, a fallback font's glyph,
-  /// the empty second half of a wide character — is drawn at its own column,
+  /// one cell for. Anything else, a wide character, a fallback font's glyph or
+  /// the empty second half of a wide character, is drawn at its own column,
   /// where its width cannot move its neighbours.
   void _paintForegrounds(
     Canvas canvas,

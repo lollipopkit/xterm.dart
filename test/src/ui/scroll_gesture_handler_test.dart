@@ -87,6 +87,15 @@ void main() {
         await gesture.up();
 
         expect(outputs, contains('\x1b[B'));
+
+        // The alt buffer alone forwards the gesture; no mouse mode was
+        // enabled, so nothing may be reported as a mouse event. Without this
+        // the test would also pass if the drag were reported both ways.
+        expect(
+          outputs,
+          isNot(contains(predicate<String>((output) => output.contains('M')))),
+          reason: 'a mouse report was sent alongside the arrow key',
+        );
       },
     );
   });

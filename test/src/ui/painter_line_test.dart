@@ -142,6 +142,10 @@ void main() {
     final lastRect = painted.ops.lastIndexWhere((op) => op.isRect);
     final firstGlyph = painted.ops.indexWhere((op) => !op.isRect);
 
+    // Both have to exist, or the ordering below holds vacuously: with no rects
+    // lastRect is -1, which is less than any glyph index.
+    expect(lastRect, isNonNegative, reason: 'no background was painted');
+    expect(firstGlyph, isNonNegative, reason: 'no glyph was painted');
     expect(lastRect, lessThan(firstGlyph));
   });
 }

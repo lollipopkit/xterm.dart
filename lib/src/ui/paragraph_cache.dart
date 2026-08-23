@@ -8,12 +8,12 @@ import 'package:quiver/collection.dart';
 ///
 /// A record rather than a hashed int, so the components are compared
 /// structurally. A hashed key that collides hands back a [Paragraph] laid out
-/// for a different cell, and the terminal paints the wrong glyph — silently,
+/// for a different cell, and the terminal paints the wrong glyph: silently,
 /// and depending on what else happens to be in the LRU at that moment.
 ///
-/// Everything that only affects the *colour* — `faint`, `inverse`, the
-/// painter's `reverseDisplay` — is resolved into the colour before the key is
-/// built, and so must not appear in `styleFlags`. Two cells arriving at the
+/// Everything that only affects the *colour*, meaning `faint`, `inverse` and
+/// the painter's `reverseDisplay`, is resolved into the colour before the key
+/// is built, and so must not appear in `styleFlags`. Two cells arriving at the
 /// same colour by different routes share a paragraph, correctly.
 ///
 /// The colour is an ARGB32 int rather than a [Color] because hashing four
@@ -36,7 +36,7 @@ typedef RunKey = (String text, int argb, int styleFlags);
 /// Lays [text] out with [style] at [textScaler], unconstrained.
 ///
 /// Separate from [ParagraphCache] so a caller can inspect a paragraph before
-/// deciding whether to keep it — the run painter measures one against the cell
+/// deciding whether to keep it. The run painter measures one against the cell
 /// grid and throws it away if the font did not advance uniformly.
 Paragraph buildParagraph(String text, TextStyle style, TextScaler textScaler) {
   final builder = ParagraphBuilder(style.getParagraphStyle());
