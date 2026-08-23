@@ -310,33 +310,65 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
   /// in the range of [y, y+1, y-1] lines sequentially.
   /// But we should check y>0 before y-1 and y<terminalHeight before y+1.
   BufferRangeLine? selectWord(CellOffset from, [CellOffset? to]) {
-    BufferRangeLine? fromBoundary;
-
-    /// Toleration for the point position is not accurate.
-    for (final yOffset in _getYOffsetForFindingWord(from.y)) {
-      final fromOffset = CellOffset(from.x, from.y + yOffset);
-      fromBoundary = _terminal.buffer.getWordBoundary(fromOffset);
-      if (fromBoundary != null) break;
-    }
+    final fromBoundary = wordBoundaryAt(from);
     if (fromBoundary == null) return null;
 
     if (to == null) {
       selectBufferRange(fromBoundary, mode: SelectionMode.line);
       return fromBoundary;
     } else {
-      /// Same as find [fromBoundary]
-      BufferRangeLine? toBoundary;
-      for (final yOffset in _getYOffsetForFindingWord(to.y)) {
-        final toOffset = CellOffset(to.x, to.y + yOffset);
-        toBoundary = _terminal.buffer.getWordBoundary(toOffset);
-        if (toBoundary != null) break;
-      }
+      final toBoundary = wordBoundaryAt(to);
       if (toBoundary == null) return null;
 
       final range = fromBoundary.merge(toBoundary);
       selectBufferRange(range, mode: SelectionMode.line);
       return range;
     }
+  }
+
+  /// The word [offset] is in, or null where there is none. Changes nothing:
+  /// [selectWord] is this and then a selection, and a drag that grows by the
+  /// word needs the boundary on its own, several times per second.
+  BufferRangeLine? wordBoundaryAt(CellOffset offset) {
+    /// Toleration for the point position is not accurate.
+    for (final yOffset in _getYOffsetForFindingWord(offset.y)) {
+      final candidate = CellOffset(offset.x, offset.y + yOffset);
+      final boundary = _terminal.buffer.getWordBoundary(candidate);
+      if (boundary != null) return boundary;
+    }
+    return null;
+  }
+
+  /// The whole line [offset] is on.
+  ///
+  /// A line that wrapped is one line: the rows it runs over are one line of
+  /// text, and taking all of them is what a third click does in a text field
+  /// and in every terminal that has the gesture.
+  BufferRangeLine lineBoundaryAt(CellOffset offset) {
+    final buffer = _terminal.buffer;
+    final lines = buffer.lines;
+
+    var start = offset.y.clamp(0, lines.length - 1);
+    while (start > 0 && lines[start].isWrapped) {
+      start--;
+    }
+
+    var end = start;
+    while (end + 1 < lines.length && lines[end + 1].isWrapped) {
+      end++;
+    }
+
+    return BufferRangeLine(
+      CellOffset(0, start),
+      CellOffset(buffer.viewWidth, end),
+    );
+  }
+
+  /// Selects the whole line [from] is on. See [lineBoundaryAt].
+  BufferRangeLine selectLine(CellOffset from) {
+    final range = lineBoundaryAt(from);
+    selectBufferRange(range, mode: SelectionMode.line);
+    return range;
   }
 
   String? get selectedText {

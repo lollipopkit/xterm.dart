@@ -11,6 +11,11 @@ import 'package:xterm/xterm.dart';
 
 enum _DragHandleType { none, start, end }
 
+/// How much of the text a click takes, and how much a drag started by that
+/// click adds at a time. Which one applies is decided by how many times the
+/// pointer went down in the same place, as it is in a text field.
+enum _SelectionGranularity { character, word, line }
+
 class TerminalGestureHandler extends StatefulWidget {
   const TerminalGestureHandler({
     super.key,
@@ -57,22 +62,20 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
   CellOffset? _longPressInitialCellOffset;
   late double _originTextSize = terminalView.widget.textStyle.fontSize;
 
-  // 拖杆相关状态
+  // Selection handles.
   _DragHandleType _activeDragHandle = _DragHandleType.none;
-  CellOffset? _dragHandleFixedPoint; // 拖动时不变的选区端点
-  bool _isDragHandleReady = false; // 拖杆是否准备就绪（点击检测到拖杆）
+  CellOffset? _dragHandleFixedPoint; // The end a handle drag holds still.
+  bool _isDragHandleReady = false; // A tap landed on a handle; a drag may come.
 
-  // 优化的容忍度设置
-  static const double _handleTouchRadius = 32.0; // 增加拖杆触摸区域半径
-  static const double _selectionTolerance = 20.0; // 点击选区附近的容忍度
-  static const Duration _tapTolerance = Duration(milliseconds: 150); // 点击时间容忍度
+  static const double _handleTouchRadius = 32.0;
+  static const double _selectionTolerance = 20.0;
+  static const Duration _tapTolerance = Duration(milliseconds: 150);
 
-  // 防抖相关
   DateTime? _lastTapTime;
   Offset? _lastTapPosition;
   bool _isDraggingHandle = false;
 
-  // 桌面端拖动选区相关状态
+  // Dragging a selection out with a mouse.
   bool _isMouseDeviceDown = false;
   bool _isMouseSelectionInProgress = false;
   CellOffset? _mouseSelectionBase;
@@ -81,10 +84,34 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
   bool _mouseTapDownDispatched = false;
   Offset? _mouseSelectionLastPosition;
 
-  // 延迟 tapDown 执行相关
+  // Held back so that a long press or a drag beginning at the same point is
+  // seen first, and the terminal is not told about a click that turned out to
+  // be the start of something else.
   Timer? _tapDownTimer;
   TapDownDetails? _pendingTapDownDetails;
-  static const Duration _tapDownDelay = Duration(milliseconds: 50); // 优化延迟：减少等待时间
+  static const Duration _tapDownDelay = Duration(milliseconds: 50);
+
+  /// How many times the pointer has gone down in the same place without the
+  /// run being broken by [kDoubleTapTimeout] or by moving further than
+  /// [kDoubleTapSlop]. One is a click, two is a word, three is a line.
+  ///
+  /// Counted here rather than taken from a [DoubleTapGestureRecognizer],
+  /// which stops at two, or from [TapAndPanGestureRecognizer], which would
+  /// mean taking the drag out of the arena that pinch-to-zoom shares. The
+  /// rule for what breaks a run is the framework's own, from
+  /// `_TapStatusTrackerMixin`.
+  int _consecutiveTapCount = 0;
+  Offset? _lastTapDownPosition;
+  Timer? _tapCountResetTimer;
+
+  /// What the drag now under way grows by. Set when it starts, from the tap
+  /// count that started it, and read on every move: a drag begun by a double
+  /// click keeps taking whole words however far it goes.
+  _SelectionGranularity _granularity = _SelectionGranularity.character;
+
+  /// Set when this tap made or grew a selection, so that its own tap-up does
+  /// not turn round and clear it.
+  bool _tapChangedSelection = false;
 
   static final TextSelectionControls _materialSelectionControls =
       MaterialTextSelectionControls();
@@ -141,7 +168,10 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
       onSecondaryTapUp: onSecondaryTapUp,
       onTertiaryTapDown: widget.onTertiaryTapDown,
       onTertiaryTapUp: widget.onTertiaryTapUp,
-      onDoubleTapDown: onDoubleTapDown,
+      // No `onDoubleTapDown`. Registering a double tap takes the second tap
+      // out of `onTapDown`, and then a third one looks like a second: the
+      // count kept below is what distinguishes them, and it can only see
+      // taps the tap recogniser still reports.
       onScaleEnd: onScaleEnd,
       onScaleStart: onScaleStart,
       onScaleUpdate: onScaleUpdate,
@@ -170,6 +200,7 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
   @override
   void dispose() {
     _cancelPendingTapDown();
+    _tapCountResetTimer?.cancel();
     widget.terminalController.removeListener(_handleControllerSelectionChanged);
     _detachScrollController(_attachedScrollController);
     super.dispose();
@@ -179,7 +210,8 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
       !widget.readOnly &&
       widget.terminalController.shouldSendPointerInput(PointerInput.tap);
 
-  /// 取消待执行的 tapDown
+  /// Drops a tap-down that was being held back, so it never reaches the
+  /// terminal.
   void _cancelPendingTapDown() {
     final hadPending = _pendingTapDownDetails != null || _tapDownTimer != null;
     _tapDownTimer?.cancel();
@@ -190,7 +222,7 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
     }
   }
 
-  /// 执行待执行的 tapDown
+  /// Sends the tap-down that was being held back.
   void _executePendingTapDown() {
     if (_pendingTapDownDetails != null) {
       final pendingDetails = _pendingTapDownDetails!;
@@ -404,7 +436,7 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
     return CellOffset(lastColumn, previousRow);
   }
 
-  /// 检测点击位置是否在拖杆范围内
+  /// The selection handle under [localPosition], or none.
   _DragHandleType _detectDragHandle(Offset localPosition) {
     final BufferRangeLine? range = _selectedRange;
     if (range == null || range.isCollapsed) {
@@ -472,7 +504,8 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
     return bestMatch?.$1 ?? _DragHandleType.none;
   }
 
-  /// 检查点击位置是否在选区附近（容忍度范围内）
+  /// Whether [localPosition] is inside the selection or close enough to it
+  /// to count as on it.
   bool _isNearSelection(Offset localPosition) {
     final BufferRangeLine? range = _selectedRange;
     if (range == null || range.isCollapsed) {
@@ -494,7 +527,7 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
     return expandedRect.contains(localPosition);
   }
 
-  /// 防抖检查
+  /// Whether this is the same tap as the last one arriving twice.
   bool _isDuplicateTap(Offset position) {
     final now = DateTime.now();
     if (_lastTapTime != null && _lastTapPosition != null) {
@@ -509,6 +542,95 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
     _lastTapTime = now;
     _lastTapPosition = position;
     return false;
+  }
+
+  /// Counts this pointer-down into the run of taps at the same place, and
+  /// returns how many that makes. A run is broken by moving too far or by
+  /// waiting too long, and stops counting up at three, which is the most any
+  /// of them means something.
+  int _countTap(Offset position) {
+    final last = _lastTapDownPosition;
+    if (last == null || (position - last).distance > kDoubleTapSlop) {
+      _consecutiveTapCount = 1;
+    } else if (_consecutiveTapCount < 3) {
+      _consecutiveTapCount++;
+    }
+
+    _lastTapDownPosition = position;
+
+    // Restarted on every tap, so the timeout runs from the last one rather
+    // than from the first: a slow but steady run of clicks is still a run.
+    _tapCountResetTimer?.cancel();
+    _tapCountResetTimer = Timer(kDoubleTapTimeout, _resetTapCount);
+
+    return _consecutiveTapCount;
+  }
+
+  void _resetTapCount() {
+    _tapCountResetTimer?.cancel();
+    _tapCountResetTimer = null;
+    _consecutiveTapCount = 0;
+    _lastTapDownPosition = null;
+  }
+
+  static _SelectionGranularity _granularityForTapCount(int count) {
+    switch (count) {
+      case 1:
+        return _SelectionGranularity.character;
+      case 2:
+        return _SelectionGranularity.word;
+      default:
+        return _SelectionGranularity.line;
+    }
+  }
+
+  bool get _isShiftPressed {
+    final pressed = HardwareKeyboard.instance.logicalKeysPressed;
+    return pressed.contains(LogicalKeyboardKey.shiftLeft) ||
+        pressed.contains(LogicalKeyboardKey.shiftRight) ||
+        pressed.contains(LogicalKeyboardKey.shift);
+  }
+
+  /// The selection from [base] to [current], grown at both ends to whole
+  /// words or whole lines when that is what the drag is taking.
+  ///
+  /// Both ends grow, not just the moving one: a drag that started inside a
+  /// word and ran left has that first word in it, and losing it as soon as
+  /// the pointer passes the word's start is the thing this avoids.
+  BufferRangeLine _rangeFor(CellOffset base, CellOffset current) {
+    final plain = current.isBefore(base)
+        ? BufferRangeLine(current, base)
+        : BufferRangeLine(base, current);
+
+    switch (_granularity) {
+      case _SelectionGranularity.character:
+        return plain;
+      case _SelectionGranularity.word:
+        final begin = renderTerminal.wordBoundaryAt(plain.begin);
+        final end = renderTerminal.wordBoundaryAt(plain.end);
+        if (begin == null && end == null) return plain;
+        return (begin ?? plain).merge(end ?? plain);
+      case _SelectionGranularity.line:
+        return renderTerminal
+            .lineBoundaryAt(plain.begin)
+            .merge(renderTerminal.lineBoundaryAt(plain.end));
+    }
+  }
+
+  /// Grows the selection to [target], keeping whichever of its ends is
+  /// further away. This is shift-click: the end that moves is the near one,
+  /// so the text between the anchor and the pointer is what ends up selected
+  /// however the two are ordered.
+  void _extendSelectionTo(CellOffset target) {
+    final range = _selectedRange?.normalized;
+    if (range == null) {
+      return;
+    }
+
+    final anchor = target.isBefore(range.begin) ? range.end : range.begin;
+    _mouseSelectionBase = anchor;
+    _isMouseSelectionInProgress = true;
+    _applySelection(_rangeFor(anchor, target));
   }
 
   bool _isPointerKindMouse(PointerDeviceKind? kind) {
@@ -588,22 +710,9 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
       }
     }
 
-    BufferRangeLine newRange;
-    var didMove = false;
+    _applySelection(_rangeFor(base, current));
 
-    if (current == base) {
-      newRange = BufferRangeLine(base, base);
-    } else if (current.isBefore(base)) {
-      newRange = BufferRangeLine(current, base);
-      didMove = true;
-    } else {
-      newRange = BufferRangeLine(base, current);
-      didMove = true;
-    }
-
-    _applySelection(newRange);
-
-    if (didMove) {
+    if (current != base) {
       terminalView.updateAutoScroll(
         localPosition,
         onTick: () => _handleMouseSelectionUpdate(localPosition),
@@ -698,39 +807,46 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
 
     _resetMouseSelectionState();
 
-    // 如果有待执行的 tapDown，立即执行
+    // A tap-down still being held back has run out of reasons to wait.
     if (_pendingTapDownDetails != null) {
       _executePendingTapDown();
     }
     _cancelPendingTapDown();
 
-    // 防抖检查
+    // The same tap arriving twice.
     if (_isDuplicateTap(details.localPosition)) {
       return;
     }
 
-    // 如果之前检测到拖杆准备状态但没有实际拖动，重置状态
+    // A handle was taken hold of but never dragged.
     if (_isDragHandleReady && !_isDraggingHandle) {
       _resetDragHandleState();
     }
 
     widget.onTapUp?.call(details);
 
+    // The tap that made this selection is still going up. Clearing here would
+    // undo what the same gesture just did, which is what a registered double
+    // tap used to hide by swallowing the second tap.
+    if (_tapChangedSelection) {
+      return;
+    }
+
     if (_selectedRange != null) {
-      // 检查是否点击了拖杆
       final dragHandle = _detectDragHandle(details.localPosition);
       if (dragHandle != _DragHandleType.none) {
-        // 点击了拖杆，不做任何操作，等待可能的拖动
+        // On a handle. Leave the selection alone and wait for the drag.
         return;
       }
 
-      // 点击选区内部或外部都清除选择
+      // A click anywhere else drops the selection, inside it or out.
       _clearSelection();
     }
   }
 
   void onTapDown(TapDownDetails details) {
     _suppressNextTapUp = false;
+    _tapChangedSelection = false;
 
     if (_isPointerKindMouse(details.kind)) {
       _isMouseDeviceDown = true;
@@ -745,23 +861,57 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
       _resetMouseSelectionState();
     }
 
-    // 优先检查是否点击了拖杆（如果已有选区）
-    if (_selectedRange != null && !_selectedRange!.isCollapsed) {
+    final tapCount = _countTap(details.localPosition);
+    final cellOffset = renderTerminal.getCellOffset(details.localPosition);
+
+    final hasSelection =
+        _selectedRange != null && !_selectedRange!.isCollapsed;
+
+    // Shift held asks for a bigger selection rather than a new one, and says
+    // so plainly enough to come before the handles: extending backwards means
+    // clicking to the left of the selection, which is where its start handle
+    // is, and no one holds shift to take hold of one.
+    //
+    // The granularity stays whatever the run that made the selection set, so
+    // shift-clicking after a double click goes on taking whole words. That is
+    // what a text field on this platform does, and an editor.
+    if (_isShiftPressed && hasSelection) {
+      _resetTapCount();
+      _cancelPendingTapDown();
+      _tapChangedSelection = true;
+      _extendSelectionTo(cellOffset);
+      return;
+    }
+
+    // A handle takes the tap ahead of anything else — but only a tap that
+    // begins a run. The second and third clicks of one land in the middle of
+    // the selection the first made, which is where that selection's handles
+    // now are, and reading those as a grab is what stopped a third click ever
+    // arriving.
+    if (tapCount <= 1 && hasSelection) {
       final dragHandle = _detectDragHandle(details.localPosition);
       if (dragHandle != _DragHandleType.none) {
-        // 点击了拖杆，准备拖动状态
+        _resetTapCount();
         _prepareDragHandle(dragHandle);
-        // 不设置延迟的 tapDown，因为这是拖杆操作
         return;
       }
     }
 
-    // 延迟执行 tapDown，先等待可能的长按或拖动事件
+    _granularity = _granularityForTapCount(tapCount);
+
+    if (_granularity != _SelectionGranularity.character) {
+      _tapChangedSelection = true;
+      _cancelPendingTapDown();
+      _resetDragHandleState();
+      _selectAtGranularity(cellOffset, details.kind);
+      return;
+    }
+
+    // Held back so that a long press or a drag beginning here is seen first.
     _cancelPendingTapDown();
     _pendingTapDownDetails = details;
 
     _tapDownTimer = Timer(_tapDownDelay, () {
-      // 只有在没有进入拖杆模式时才执行 tapDown
       if (!_isDragHandleReady) {
         _executePendingTapDown();
       }
@@ -769,7 +919,43 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
     });
   }
 
-  /// 准备拖杆拖动状态
+  /// Selects the word or the line under [cellOffset], whichever the run of
+  /// taps has reached.
+  void _selectAtGranularity(CellOffset cellOffset, PointerDeviceKind? kind) {
+    final BufferRangeLine? range;
+
+    switch (_granularity) {
+      case _SelectionGranularity.character:
+        return;
+      case _SelectionGranularity.word:
+        // A word, whatever the pointer was. A second click is what asks for
+        // the word under it, in a text field and in every other terminal; the
+        // mouse used to get a single cell here, which is what one click
+        // already gives.
+        range = renderTerminal.selectWord(cellOffset);
+      case _SelectionGranularity.line:
+        range = renderTerminal.selectLine(cellOffset);
+    }
+
+    if (range != null) {
+      _applySelection(range);
+    }
+
+    if (widget.showToolbar) {
+      final Rect? selectionRect = _currentSelectionGlobalRect();
+      if (selectionRect != null) {
+        widget.terminalView.showSelectionToolbar(selectionRect);
+      }
+    }
+
+    // Only where there is something to feel it: a mouse double click on a
+    // desktop would buzz the phone-shaped part of the API for nothing.
+    if (kind == PointerDeviceKind.touch) {
+      HapticFeedback.lightImpact();
+    }
+  }
+
+  /// Arms a handle drag: the tap landed on one, and a drag may follow.
   void _prepareDragHandle(_DragHandleType dragHandle) {
     if (_selectedRange == null) {
       return;
@@ -781,7 +967,7 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
         ? range.end
         : range.begin;
 
-    // 提供轻微的触觉反馈表示检测到拖杆
+    // Confirms the handle was found, before anything has moved.
     HapticFeedback.lightImpact();
   }
 
@@ -948,7 +1134,7 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
     _syncSelectionFromController();
   }
 
-  /// 重置拖杆状态
+  /// Forgets any handle drag, armed or under way.
   void _resetDragHandleState() {
     _activeDragHandle = _DragHandleType.none;
     _isDragHandleReady = false;
@@ -972,59 +1158,30 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
     _tapUp(widget.onTertiaryTapUp, details, TerminalMouseButton.right);
   }
 
-  void onDoubleTapDown(TapDownDetails details) {
-    // 双击时取消待执行的 tapDown 和拖杆状态
-    _cancelPendingTapDown();
-    _resetDragHandleState();
-
-    final cellOffset = renderTerminal.getCellOffset(details.localPosition);
-
-    // A word, whatever the pointer was. A second click is what asks for the
-    // word under it, in a text field and in every other terminal; the mouse
-    // used to get a single cell here, which is what one click already gives.
-    final BufferRangeLine? wordRange = renderTerminal.selectWord(cellOffset);
-    if (wordRange != null) {
-      _applySelection(wordRange);
-    }
-
-    // 显示工具栏（触摸和鼠标设备统一处理）
-    if (widget.showToolbar) {
-      final Rect? selectionRect = _currentSelectionGlobalRect();
-      if (selectionRect != null) {
-        widget.terminalView.showSelectionToolbar(selectionRect);
-      }
-    }
-
-    // Only where there is something to feel it: a mouse double click on a
-    // desktop would buzz the phone-shaped part of the API for nothing.
-    if (details.kind == PointerDeviceKind.touch) {
-      HapticFeedback.lightImpact();
-    }
-  }
-
   void onScaleStart(ScaleStartDetails details) {
-    // 缩放开始时取消待执行的 tapDown
+    // Whatever this turns out to be, it is not the click being held back.
     _cancelPendingTapDown();
 
-    // 优先检查是否已经准备好拖杆状态
+    // Already armed by the tap that landed on the handle.
     if (_isDragHandleReady && _activeDragHandle != _DragHandleType.none) {
-      // 从准备状态进入实际拖动
+      // Armed, and now moving.
       _isDraggingHandle = true;
       _longPressInitialCellOffset = null;
       if (widget.showToolbar) {
         widget.terminalView.hideSelectionToolbar();
       }
 
-      // 提供拖动开始的触觉反馈
+      // The drag is under way.
       HapticFeedback.selectionClick();
       return;
     }
 
-    // 检测是否是拖杆操作（fallback，通常不应该到这里）
+    // A drag that began on a handle without a tap-down arming it first.
+    // Reachable, but not by any ordinary sequence of events.
     _activeDragHandle = _detectDragHandle(details.localFocalPoint);
 
     if (_activeDragHandle != _DragHandleType.none && _selectedRange != null) {
-      // 开始拖杆操作
+      // Take hold of the handle here instead.
       _isDraggingHandle = true;
       final BufferRangeLine range = _selectedRange!.normalized;
       _dragHandleFixedPoint = _activeDragHandle == _DragHandleType.start
@@ -1035,13 +1192,13 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
         widget.terminalView.hideSelectionToolbar();
       }
 
-      // 提供触觉反馈
+      // The drag is under way.
       HapticFeedback.selectionClick();
     } else {
-      // 不是拖杆操作，处理缩放或清除选区
+      // Not a handle, so a pinch or a click on the background.
       _resetDragHandleState();
 
-      // 如果不在选区附近，清除选区
+      // Away from the selection, which drops it.
       if (_selectedRange != null &&
           !_isNearSelection(details.localFocalPoint)) {
         _clearSelection();
@@ -1055,9 +1212,9 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
   void onScaleUpdate(ScaleUpdateDetails details) {
     if (_activeDragHandle != _DragHandleType.none &&
         (_isDraggingHandle || _isDragHandleReady)) {
-      // 处理拖杆拖动
+      // Moving a handle.
       if (!_isDraggingHandle) {
-        // 从准备状态进入拖动状态
+        // Armed, and now moving.
         _isDraggingHandle = true;
         HapticFeedback.selectionClick();
       }
@@ -1069,7 +1226,7 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
         details.scale != 1.0 &&
         !_isDraggingHandle &&
         !_isDragHandleReady) {
-      // 处理双指缩放
+      // Two fingers, which is the font size.
       _handleZoomUpdate(details);
     }
   }
@@ -1078,7 +1235,7 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
     if (_isMouseSelectionInProgress) {
       _finishMouseSelection();
     } else if (_activeDragHandle != _DragHandleType.none && _isDraggingHandle) {
-      // 拖杆拖动结束
+      // A handle was let go of.
       HapticFeedback.selectionClick();
       if (widget.showToolbar) {
         final Rect? rect = _currentSelectionGlobalRect();
@@ -1087,7 +1244,7 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
         }
       }
     } else if (!_isDraggingHandle && !_isDragHandleReady) {
-      // 缩放结束
+      // A pinch ended; the size it reached is the one to grow from next.
       _originTextSize = terminalView.textSizeNoti.value;
     }
 
@@ -1099,7 +1256,7 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
 
     final currentCellOffset = renderTerminal.getCellOffset(localPosition);
 
-    // 防止拖动到相同位置
+    // Still on the cell it was already on.
     final currentHandleEnd = _activeDragHandle == _DragHandleType.start
         ? _selectedRange?.begin
         : _selectedRange?.end;
@@ -1107,7 +1264,8 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
       return;
     }
 
-    // 计算选区范围（统一处理开始和结束拖杆）
+    // Which handle is being held makes no difference to the range: it runs
+    // from the fixed end to the pointer either way.
     final isBefore = currentCellOffset.isBefore(_dragHandleFixedPoint!);
     final newStart = isBefore ? currentCellOffset : _dragHandleFixedPoint!;
     final newEnd = isBefore ? _dragHandleFixedPoint! : currentCellOffset;
@@ -1130,7 +1288,7 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
   }
 
   void _handleZoomUpdate(ScaleUpdateDetails details) {
-    // 只处理双指缩放
+    // Two fingers moving apart or together, and nothing else.
     if (details.pointerCount != 2 || details.scale == 1.0) {
       return;
     }
@@ -1138,7 +1296,7 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
     final scale = math.pow(details.scale, 0.3);
     final fontSize = _originTextSize * scale;
 
-    // 限制字体大小范围
+    // Outside this the terminal stops being readable.
     if (fontSize >= 7 && fontSize <= 17) {
       terminalView.textSizeNoti.value = fontSize;
     }
@@ -1158,38 +1316,40 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
   }
 
   void _onLongPressStart(LongPressStartDetails details) {
-    // 长按开始时取消待执行的 tapDown
+    // This is a long press, not the click being held back.
     _cancelPendingTapDown();
 
-    // 如果已经在拖杆准备状态，不处理长按
+    // A handle is armed, and a long press on one means nothing.
     if (_isDragHandleReady) {
       return;
     }
 
-    // 长按只用于初始化选区，不处理已有选区的调整
+    // A long press only starts a selection. Adjusting one that already
+    // exists is what its handles are for.
     if (_selectedRange != null && !_selectedRange!.isCollapsed) {
-      // 如果点击在选区外，清除选区并重新开始
+      // Outside it, so start again from here.
       if (!_isNearSelection(details.localPosition)) {
         _clearSelection();
       } else {
-        // 在选区内或附近的长按不做处理
+        // On it, which is not a request for anything.
         return;
       }
     }
 
-    // 执行原有的长按逻辑 - 直接选中单词
+    // Nothing is selected now, whether or not something was.
     _clearSelection();
 
     final longPressCellOffset = renderTerminal.getCellOffset(
       details.localPosition,
     );
 
-    // 直接选中单词而非折叠选区（符合 Android 原生行为）
+    // A word rather than an insertion point, which is what a long press
+    // gives on this platform.
     final wordRange = renderTerminal.selectWord(longPressCellOffset);
     if (wordRange != null) {
       _applySelection(wordRange);
 
-      // 立即显示工具栏
+      // With the toolbar already up: there is something to act on.
       if (widget.showToolbar && !wordRange.isCollapsed) {
         final Rect? selectionRect = _currentSelectionGlobalRect();
         if (selectionRect != null) {
@@ -1197,25 +1357,25 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
         }
       }
     } else {
-      // 如果无法选中单词，回退到选中单个字符
+      // No word here — a blank, or the edge. Take the one cell instead.
       _longPressInitialCellOffset = longPressCellOffset;
       _applySelection(BufferRangeLine.collapsed(longPressCellOffset));
     }
 
-    // 重置拖杆状态
+    // The handles this selection just put on screen are untouched so far.
     _resetDragHandleState();
 
-    // 提供长按反馈
+    // The press registered.
     HapticFeedback.lightImpact();
   }
 
   void _onLongPressMoveUpdate(LongPressMoveUpdateDetails details) {
-    // 如果在拖杆模式，不处理长按移动
+    // A handle is being moved, and it has its own path for this.
     if (_isDragHandleReady || _isDraggingHandle) {
       return;
     }
 
-    // 处理传统的长按拖动选择（仅用于初始化选区）
+    // Only a long press that started a selection of its own extends it.
     if (_longPressInitialCellOffset == null) {
       return;
     }
@@ -1224,7 +1384,7 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
       details.localPosition,
     );
 
-    // 防止无效更新
+    // Still on the cell it was already on.
     if (currentCellOffset == _longPressInitialCellOffset) {
       return;
     }
@@ -1247,7 +1407,7 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
   void _onLongPressEnd(LongPressEndDetails details) {
     terminalView.stopAutoScroll();
 
-    // 长按结束只处理初始选区创建的情况
+    // Only a long press that started a selection has anything to finish.
     if (_longPressInitialCellOffset != null) {
       _longPressInitialCellOffset = null;
 
