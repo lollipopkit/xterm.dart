@@ -12,9 +12,10 @@ import 'package:xterm/xterm.dart';
 // two halves of that: it goes on without further events, and it stops on
 // release rather than running on.
 //
-// Driven through the long press, because that is the drag a widget test can
-// deliver: the mouse path arrives as a scale update and competes with the
-// scrollable the view has of its own.
+// Driven through the long press. A mouse drag is deliverable in a widget test
+// and test/src/ui/selection_gesture_test.dart does deliver one, but only along
+// a row: this needs a drag to the top edge, and a vertical one is taken by the
+// scrollable inside the view before the selection ever sees it.
 
 void main() {
   testWidgets('a drag held at the top edge goes on scrolling', (tester) async {
