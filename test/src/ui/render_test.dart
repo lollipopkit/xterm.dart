@@ -18,8 +18,7 @@ void main() {
     final terminal = Terminal();
     terminal.write('foo bar');
 
-    const vsync = TestVSync();
-    final controller = TerminalController(vsync: vsync);
+    final controller = TerminalController();
     final focusNode = FocusNode();
 
     final render = RenderTerminal(
@@ -79,8 +78,7 @@ void main() {
     final terminal = Terminal();
     terminal.write('abcdef');
 
-    const vsync = TestVSync();
-    final controller = TerminalController(vsync: vsync);
+    final controller = TerminalController();
     final base = terminal.buffer.createAnchor(0, 0);
     final oldExtent = terminal.buffer.createAnchor(2, 0);
     final newExtent = terminal.buffer.createAnchor(4, 0);
@@ -96,7 +94,7 @@ void main() {
     controller.dispose();
   });
 
-  test('TerminalController.setSelection works without vsync', () {
+  test('TerminalController.setSelection sets the selection', () {
     final terminal = Terminal();
     terminal.write('abcdef');
 
@@ -107,7 +105,6 @@ void main() {
     controller.setSelection(base, extent);
 
     expect(controller.selection, isNotNull);
-    expect(controller.selectionAnimation, isNull);
 
     controller.dispose();
   });
@@ -116,8 +113,7 @@ void main() {
     final terminal = Terminal();
     terminal.write('abcdef');
 
-    const vsync = TestVSync();
-    final controller = TerminalController(vsync: vsync);
+    final controller = TerminalController();
     final base = terminal.buffer.createAnchor(0, 0);
     final extent = terminal.buffer.createAnchor(2, 0);
     controller.setSelection(base, extent);
@@ -141,8 +137,7 @@ void main() {
     final terminal = Terminal();
     terminal.write('abcdef');
 
-    const vsync = TestVSync();
-    final controller = TerminalController(vsync: vsync);
+    final controller = TerminalController();
     final anchor = terminal.buffer.createAnchor(2, 0);
 
     controller.setSelection(anchor, anchor);
@@ -160,10 +155,8 @@ void main() {
       final terminal = Terminal();
       terminal.write('abcdef');
 
-      const vsync = TestVSync();
-      final controller = TerminalController(
-        vsync: vsync,
-        pointerInputs: const PointerInputs({}),
+        final controller = TerminalController(
+          pointerInputs: const PointerInputs({}),
       );
 
       final selectionBase = terminal.buffer.createAnchor(0, 0);
@@ -194,10 +187,8 @@ void main() {
       final terminal = Terminal();
       terminal.write('abcdef');
 
-      const vsync = TestVSync();
-      final controller = TerminalController(
-        vsync: vsync,
-        pointerInputs: const PointerInputs({}),
+        final controller = TerminalController(
+          pointerInputs: const PointerInputs({}),
       );
 
       final selectionAnchor = terminal.buffer.createAnchor(1, 0);

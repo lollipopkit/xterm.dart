@@ -53,7 +53,7 @@ class _HomeState extends State<Home> with TickerProviderStateMixin {
     onPrivateOSC: _handlePrivateOSC,
   );
 
-  late final terminalController = TerminalController(vsync: this);
+  late final terminalController = TerminalController();
 
   final terminalKey = GlobalKey<TerminalViewState>();
 

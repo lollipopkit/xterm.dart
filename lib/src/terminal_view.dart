@@ -283,7 +283,7 @@ class TerminalViewState extends State<TerminalView>
   void initState() {
     _focusNode = widget.focusNode ?? FocusNode();
     _focusNode.addListener(_handleFocusChange);
-    _controller = widget.controller ?? TerminalController(vsync: this);
+    _controller = widget.controller ?? TerminalController();
     _scrollController = widget.scrollController ?? ScrollController();
     _shortcutManager = ShortcutManager(
       shortcuts: widget.shortcuts ?? defaultTerminalShortcuts,
@@ -319,7 +319,7 @@ class TerminalViewState extends State<TerminalView>
       if (oldWidget.controller == null) {
         _controller.dispose();
       }
-      _controller = widget.controller ?? TerminalController(vsync: this);
+      _controller = widget.controller ?? TerminalController();
     }
     if (oldWidget.scrollController != widget.scrollController) {
       if (oldWidget.scrollController == null) {
