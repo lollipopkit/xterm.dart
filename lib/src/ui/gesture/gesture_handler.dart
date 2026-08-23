@@ -604,7 +604,10 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
     _applySelection(newRange);
 
     if (didMove) {
-      terminalView.autoScrollDown(localPosition);
+      terminalView.updateAutoScroll(
+        localPosition,
+        onTick: () => _handleMouseSelectionUpdate(localPosition),
+      );
     }
 
     return true;
@@ -649,6 +652,7 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
   }
 
   void _finishMouseSelection() {
+    terminalView.stopAutoScroll();
     if (!_isMouseSelectionInProgress) {
       _resetMouseSelectionState();
       return;
@@ -808,6 +812,7 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
   }
 
   void _finishHandleDrag() {
+    terminalView.stopAutoScroll();
     if (_activeDragHandle == _DragHandleType.none) {
       return;
     }
@@ -1118,7 +1123,10 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
 
     _applySelection(BufferRangeLine(newStart, newEnd));
 
-    terminalView.autoScrollDown(localPosition);
+    terminalView.updateAutoScroll(
+      localPosition,
+      onTick: () => _handleDragUpdate(localPosition),
+    );
   }
 
   void _handleZoomUpdate(ScaleUpdateDetails details) {
@@ -1230,10 +1238,15 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
 
     _applySelection(range);
 
-    terminalView.autoScrollDown(details.localPosition);
+    terminalView.updateAutoScroll(
+      details.localPosition,
+      onTick: () => _onLongPressMoveUpdate(details),
+    );
   }
 
   void _onLongPressEnd(LongPressEndDetails details) {
+    terminalView.stopAutoScroll();
+
     // 长按结束只处理初始选区创建的情况
     if (_longPressInitialCellOffset != null) {
       _longPressInitialCellOffset = null;

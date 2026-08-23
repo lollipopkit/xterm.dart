@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:xterm/src/core/buffer/cell_offset.dart';
 import 'package:xterm/src/core/cursor_type.dart';
@@ -279,6 +280,7 @@ class TerminalViewState extends State<TerminalView>
 
   @override
   void dispose() {
+    stopAutoScroll();
     widget.terminal.removeListener(_handleTerminalChange);
     _focusNode.removeListener(_handleFocusChange);
     if (widget.focusNode == null) {
@@ -695,29 +697,93 @@ class TerminalViewState extends State<TerminalView>
     }
   }
 
-  void autoScrollDown(Offset localPointerPosition) {
-    final scrollThrshold = renderTerminal.lineHeight * 3;
+  /// How far from an edge a pointer starts dragging the view, and also the
+  /// distance past that point at which it reaches [_autoScrollMaxLines].
+  double get _autoScrollBand => renderTerminal.lineHeight * 3;
+
+  /// Lines a second at full deflection. Fast enough to cross a screen while
+  /// the eye is still on the pointer, slow enough to stop on a line.
+  static const _autoScrollMaxLines = 15.0;
+
+  Ticker? _autoScrollTicker;
+  Duration _autoScrollLastTick = Duration.zero;
+
+  /// Logical pixels a second, signed. Zero means the pointer is not in either
+  /// band and the ticker has nothing to do.
+  double _autoScrollVelocity = 0;
+
+  /// Run after each tick has scrolled, so whatever is following the pointer
+  /// can follow the content that moved under it. Without it a selection stops
+  /// growing the moment the pointer stops moving, which is the whole case this
+  /// exists for.
+  VoidCallback? _autoScrollOnTick;
+
+  /// Drives the view from a pointer held near or past an edge.
+  ///
+  /// Called on every pointer move, but the scrolling itself is on a ticker
+  /// rather than on those events: a pointer held still outside the edge sends
+  /// no more of them, and stopping there is exactly what a drag past the end
+  /// of the buffer must not do.
+  void updateAutoScroll(Offset localPointerPosition, {VoidCallback? onTick}) {
+    final band = _autoScrollBand;
+    final dy = localPointerPosition.dy;
+
+    // Deflection past the inner edge of each band, clamped so that a pointer
+    // dragged far outside the widget is not faster than one just outside it.
+    final past = dy < band
+        ? -(band - dy)
+        : dy > renderTerminal.size.height - band
+        ? dy - (renderTerminal.size.height - band)
+        : 0.0;
+
+    _autoScrollVelocity =
+        (past / band).clamp(-1.0, 1.0) *
+        _autoScrollMaxLines *
+        renderTerminal.lineHeight;
+    _autoScrollOnTick = onTick;
+
+    if (_autoScrollVelocity == 0) {
+      stopAutoScroll();
+      return;
+    }
+
+    if (_autoScrollTicker == null) {
+      _autoScrollLastTick = Duration.zero;
+      _autoScrollTicker = createTicker(_onAutoScrollTick)..start();
+    }
+  }
+
+  void stopAutoScroll() {
+    _autoScrollTicker?.dispose();
+    _autoScrollTicker = null;
+    _autoScrollVelocity = 0;
+    _autoScrollOnTick = null;
+  }
+
+  void _onAutoScrollTick(Duration elapsed) {
     final position = _scrollableKey.currentState?.position;
-    if (position == null) return;
-    final notBottom = position.pixels < position.maxScrollExtent;
-    final shouldScrollDown =
-        localPointerPosition.dy > renderTerminal.size.height - scrollThrshold;
-    if (shouldScrollDown && notBottom) {
-      position.animateTo(
-        position.pixels + scrollThrshold,
-        duration: const Duration(milliseconds: 177),
-        curve: Curves.fastEaseInToSlowEaseOut,
-      );
+    if (position == null) {
+      stopAutoScroll();
+      return;
     }
-    final notTop = position.pixels > 0;
-    final shouldScrollUp = localPointerPosition.dy < scrollThrshold;
-    if (shouldScrollUp && notTop) {
-      position.animateTo(
-        position.pixels - scrollThrshold,
-        duration: const Duration(milliseconds: 177),
-        curve: Curves.fastEaseInToSlowEaseOut,
-      );
+
+    // The first tick has no interval behind it.
+    final dt = _autoScrollLastTick == Duration.zero
+        ? Duration.zero
+        : elapsed - _autoScrollLastTick;
+    _autoScrollLastTick = elapsed;
+
+    final target = (position.pixels +
+            _autoScrollVelocity * dt.inMicroseconds / 1e6)
+        .clamp(position.minScrollExtent, position.maxScrollExtent);
+
+    // `jumpTo` rather than `animateTo`: the ticker is already the animation,
+    // and starting another one per frame is what made this stutter.
+    if (target != position.pixels) {
+      position.jumpTo(target);
     }
+
+    _autoScrollOnTick?.call();
   }
 }
 
