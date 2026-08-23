@@ -115,7 +115,7 @@ class _TerminalScrollGestureHandlerState
     if (lines > 0) {
       final up = _accumulatedScroll < 0;
       for (var i = 0; i < lines; i++) {
-        _sendScrollEvent(up, fromTouch: fromTouch);
+        _sendScrollEvent(up);
       }
       _accumulatedScroll -= (up ? -lines : lines) * threshold;
     }
@@ -127,11 +127,7 @@ class _TerminalScrollGestureHandlerState
   /// up/down arrow keys — but only when the application has NOT enabled mouse
   /// mode (to avoid sending unintended arrow keys to apps expecting mouse
   /// events).
-  ///
-  /// When [fromTouch] is true (touch drag on mobile), the arrow key fallback
-  /// is disabled to avoid flooding the terminal with key events during
-  /// continuous touch gestures.
-  void _sendScrollEvent(bool up, {bool fromTouch = false}) {
+  void _sendScrollEvent(bool up) {
     final position = widget.getCellOffset(lastPointerPosition);
     final handled = widget.terminal.mouseInput(
       up ? TerminalMouseButton.wheelUp : TerminalMouseButton.wheelDown,
@@ -139,7 +135,7 @@ class _TerminalScrollGestureHandlerState
       position,
     );
 
-    if (!handled && !fromTouch && widget.simulateScroll) {
+    if (!handled && widget.simulateScroll) {
       widget.terminal.keyInput(
         up ? TerminalKey.arrowUp : TerminalKey.arrowDown,
       );
