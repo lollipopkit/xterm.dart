@@ -276,7 +276,9 @@ class TerminalPainter {
   }
 
   @pragma('vm:prefer-inline')
-  void paintHighlight(Canvas canvas, Offset offset, int length, Color color) {
+  /// [length] is in cells and may be fractional: the selection highlight is
+  /// drawn part way between two of them while it is catching up with a drag.
+  void paintHighlight(Canvas canvas, Offset offset, double length, Color color) {
     final endOffset = offset.translate(
       length * _cellSize.width,
       _cellSize.height,

@@ -14,6 +14,18 @@ enum SelectionAnimationType {
   update, // Existing selection changed.
 }
 
+// TODO: remove. Nothing outside this file reads `selectionAnimation`, so the
+// scale and position tweens below are computed on every selection change and
+// then dropped; the selection stepped a cell at a time for as long as they
+// have existed. What animates it now is `RenderTerminal.selectionT`, driven
+// from `TerminalViewState`, which interpolates the highlight's edges - a
+// scale of a rectangle on a grid of cells would distort the highlight rather
+// than move it. This also stops depending on the consumer passing a `vsync`,
+// which none of them had to and without which this produced nothing at all.
+//
+// Kept for one release because `SelectionAnimation`, `SelectionAnimationType`
+// and `TerminalController.selectionAnimation` are all exported, along with
+// the `vsync` parameter that only feeds them.
 class SelectionAnimation {
   final AnimationController controller;
   final Animation<double> scaleAnimation;

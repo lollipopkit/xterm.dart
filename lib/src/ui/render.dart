@@ -36,7 +36,6 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     required bool cursorBlinkEnabled,
     required bool cursorBlinkVisible,
     required bool alwaysShowCursor,
-    bool paintSelectionHandles = true,
     EditableRectCallback? onEditableRect,
     String? composingText,
   }) : _terminal = terminal,
@@ -49,7 +48,6 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
        _cursorBlinkEnabled = cursorBlinkEnabled,
        _cursorBlinkVisible = cursorBlinkVisible,
        _alwaysShowCursor = alwaysShowCursor,
-       _paintSelectionHandles = paintSelectionHandles,
        _onEditableRect = onEditableRect,
        _composingText = composingText,
        _painter = TerminalPainter(
@@ -166,10 +164,27 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     markNeedsPaint();
   }
 
-  bool _paintSelectionHandles;
-  set paintSelectionHandles(bool value) {
-    if (value == _paintSelectionHandles) return;
-    _paintSelectionHandles = value;
+  /// Where the selection was before the one being drawn, and how far the
+  /// highlight has travelled from there — 1 meaning it has arrived.
+  ///
+  /// A selection is whole cells, so it moves in whole cells, and dragging one
+  /// out stepped the highlight a cell at a time. These let it be drawn part
+  /// of the way, so it slides. Nothing else about the selection is affected:
+  /// what is copied, and what the handles are placed against, is the range
+  /// itself, which never has a fraction in it.
+  BufferRange? _selectionFrom;
+  BufferRange? get selectionFrom => _selectionFrom;
+  set selectionFrom(BufferRange? value) {
+    if (value == _selectionFrom) return;
+    _selectionFrom = value;
+    markNeedsPaint();
+  }
+
+  double _selectionT = 1;
+  double get selectionT => _selectionT;
+  set selectionT(double value) {
+    if (value == _selectionT) return;
+    _selectionT = value;
     markNeedsPaint();
   }
 
@@ -619,16 +634,32 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     canvas.drawParagraph(paragraph, Offset(0, offset.dy));
   }
 
-  // RenderTerminal 中的 _paintSelection 方法更新版本
-
   void _paintSelection(
     Canvas canvas,
     BufferRange selection,
     int firstLine,
     int lastLine,
   ) {
-    final segments = selection.toSegments();
-    for (final segment in segments) {
+    final to = selection.normalized;
+
+    // Where each end is drawn while the tween runs, in cells and fractional.
+    // Only the horizontal is interpolated, and only for an end that stayed on
+    // its row: a highlight sliding diagonally across a grid of cells to catch
+    // up with a row it is already on reads as a mistake rather than as motion.
+    double? beginX;
+    double? endX;
+
+    final from = _selectionFrom?.normalized;
+    if (from != null && _selectionT < 1) {
+      if (from.begin.y == to.begin.y) {
+        beginX = lerpDouble(from.begin.x, to.begin.x, _selectionT);
+      }
+      if (from.end.y == to.end.y) {
+        endX = lerpDouble(from.end.x, to.end.x, _selectionT);
+      }
+    }
+
+    for (final segment in to.toSegments()) {
       if (segment.line >= _terminal.buffer.lines.length) {
         break;
       }
@@ -641,7 +672,13 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
         break;
       }
 
-      _paintSegment(canvas, segment, _painter.theme.selection);
+      _paintSegment(
+        canvas,
+        segment,
+        _painter.theme.selection,
+        start: segment.line == to.begin.y ? beginX : null,
+        end: segment.line == to.end.y ? endX : null,
+      );
     }
   }
 
@@ -675,15 +712,21 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
   }
 
   @pragma('vm:prefer-inline')
-  void _paintSegment(Canvas canvas, BufferSegment segment, Color color) {
-    final start = segment.start ?? 0;
-    final end = segment.end ?? _terminal.viewWidth;
+  void _paintSegment(
+    Canvas canvas,
+    BufferSegment segment,
+    Color color, {
+    double? start,
+    double? end,
+  }) {
+    final startX = start ?? (segment.start ?? 0).toDouble();
+    final endX = end ?? (segment.end ?? _terminal.viewWidth).toDouble();
 
     final startOffset = Offset(
-      start * _painter.cellSize.width,
+      startX * _painter.cellSize.width,
       segment.line * _painter.cellSize.height + _lineOffset,
     );
 
-    _painter.paintHighlight(canvas, startOffset, end - start, color);
+    _painter.paintHighlight(canvas, startOffset, endX - startX, color);
   }
 }
