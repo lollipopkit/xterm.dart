@@ -251,7 +251,10 @@ void main() {
       expect(line.getCodePoint(0), 'A'.codeUnitAt(0));
       expect(line.getCodePoint(1), 0);
       expect(line.getCodePoint(2), 'B'.codeUnitAt(0));
-      expect(line.getText(), 'AB');
+      // The cell the wide character was removed from is a blank column
+      // between the two letters, and reads back as one. It used to close up,
+      // which is how a copied line lost its columns.
+      expect(line.getText(), 'A B');
     });
 
     test('detaches all anchors inside the removed range', () {

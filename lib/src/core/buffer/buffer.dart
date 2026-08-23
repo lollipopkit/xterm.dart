@@ -792,6 +792,16 @@ class Buffer {
 
   /// Get the plain text content of the buffer including the scrollback.
   /// Accepts an optional [range] to get a specific part of the buffer.
+  ///
+  /// Blanks inside a line are kept and blanks at the end of one are not. A
+  /// hole a tab or a cursor move left is part of what the line looks like and
+  /// the columns to its right depend on it; the untouched cells a line ends
+  /// with are not something anyone selected, and carrying them into the
+  /// clipboard puts a ragged right edge into whatever it is pasted in.
+  ///
+  /// A wrapped line is one line for that purpose: its parts are joined and
+  /// only the end of the last of them is trimmed, so a line that wrapped on a
+  /// space keeps it.
   String getText([BufferRange? range]) {
     range ??= BufferRangeLine(
       CellOffset(0, 0),
@@ -800,19 +810,35 @@ class Buffer {
 
     range = range.normalized;
 
-    final builder = StringBuffer();
+    // Only a line range trims. A block range's right edge is a column the
+    // caller named rather than the end of whatever happened to be written, so
+    // the blanks up to it are part of what was asked for.
+    final trimRight = range is BufferRangeLine;
 
-    for (var segment in range.toSegments()) {
+    final segments = range.toSegments().toList(growable: false);
+    final builder = StringBuffer();
+    var started = false;
+
+    for (var i = 0; i < segments.length; i++) {
+      final segment = segments[i];
       if (segment.line < 0 || segment.line >= height) {
         continue;
       }
       final line = lines[segment.line];
-      if (!(segment.line == range.begin.y ||
-          segment.line == 0 ||
-          line.isWrapped)) {
+      if (started && !line.isWrapped) {
         builder.write("\n");
       }
-      builder.write(line.getText(segment.start, segment.end));
+      started = true;
+
+      final next = i + 1 < segments.length ? segments[i + 1] : null;
+      final continues = next != null &&
+          next.line >= 0 &&
+          next.line < height &&
+          lines[next.line].isWrapped;
+
+      builder.write(
+        line.getText(segment.start, segment.end, trimRight && !continues),
+      );
     }
 
     return builder.toString();

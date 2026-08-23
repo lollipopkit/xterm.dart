@@ -497,32 +497,83 @@ class BufferLine with IndexedItem {
     return capacity;
   }
 
-  String getText([int? from, int? to]) {
-    if (from == null || from < 0) {
-      from = 0;
-    }
+  /// The text of the cells in `[from, to)`.
+  ///
+  /// A cell nothing was written to is a space, so that the columns of what
+  /// was written are the columns it is read back in. The run of them every
+  /// line ends with is dropped instead, unless [trimRight] says not to —
+  /// which is what a caller joining this to the next row passes, since the
+  /// end of a wrapped line is the middle of the text.
+  String getText([int? from, int? to, bool trimRight = true]) {
+    final start = (from == null || from < 0) ? 0 : from;
+    var end = (to == null || to > _length) ? _length : to;
 
-    if (to == null || to > _length) {
-      to = _length;
-    }
-
-    final builder = StringBuffer();
-    for (var i = from; i < to; i++) {
-      final codePoint = getCodePoint(i);
-      final width = getWidth(i);
-      if (codePoint != 0 && i + width <= to) {
-        // The cluster already starts with this cell's code point, so it
-        // replaces it rather than following it.
-        final cluster = _clusters?[i];
-        if (cluster != null) {
-          builder.write(cluster);
-        } else {
-          builder.writeCharCode(codePoint);
-        }
+    if (trimRight) {
+      // Walked back over the cells rather than over the string they produce:
+      // one cell is any number of code units, and a cluster ending in a space
+      // is text rather than padding.
+      while (end > start && _isBlank(end - 1)) {
+        end--;
       }
     }
 
+    final builder = StringBuffer();
+
+    for (var i = start; i < end; i++) {
+      if (getCodePoint(i) != 0) {
+        _writeCell(builder, i);
+        continue;
+      }
+
+      // An empty cell is one of two things, told apart by the cell to its
+      // left, which is how the rest of the buffer tells them apart too.
+      if (i > 0 && getWidth(i - 1) == 2) {
+        // The second column of a wide character. Its text lives in the first
+        // column and was written when that column came up — unless the range
+        // starts here, which is a selection that took half a character, and
+        // then this column is the only chance to write it.
+        if (i == start) {
+          _writeCell(builder, i - 1);
+        }
+        continue;
+      }
+
+      // Otherwise a cell nothing was written to, or one that was erased. It
+      // is a blank the reader has to see: a tab, a cursor move and ECH each
+      // leave one behind, and dropping it slides the rest of the line left,
+      // which takes the columns out of anything laid out in them.
+      builder.write(' ');
+    }
+
     return builder.toString();
+  }
+
+  /// Whether the cell at [index] reads as nothing: never written, the second
+  /// column of a wide character, or a space. A space someone typed and one
+  /// left over from a line that was never that long are the same cell, so
+  /// trimming cannot tell them apart and does not try.
+  bool _isBlank(int index) {
+    final codePoint = getCodePoint(index);
+
+    if (codePoint == 0) {
+      // The second column of a wide character is not padding. Trimming past
+      // it would leave the range ending on the character's first column, and
+      // a range that ends where a character starts holds none of it.
+      return !(index > 0 && getWidth(index - 1) == 2);
+    }
+
+    return codePoint == 0x20 && _clusters?[index] == null;
+  }
+
+  void _writeCell(StringBuffer builder, int index) {
+    // The cluster already starts with the cell's code point, so it replaces
+    // it rather than following it.
+    final cluster = _clusters?[index];
+    if (cluster != null) {
+      builder.write(cluster);
+    } else {
+      builder.writeCharCode(getCodePoint(index));
+    }
   }
 
   CellAnchor createAnchor(int offset) {

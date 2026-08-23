@@ -658,7 +658,10 @@ void main() {
 
         terminal.write('\x1b[?7labc界');
 
-        expect(terminal.buffer.lines[0].getText(), 'abc ');
+        // Untrimmed, because the space in the last column is the assertion:
+        // the wide character did not fit and did not wrap, so the cell was
+        // blanked rather than written to.
+        expect(terminal.buffer.lines[0].getText(null, null, false), 'abc ');
         expect(terminal.buffer.lines[1].getText(), '');
         expect(terminal.buffer.cursorX, 3);
         expect(terminal.buffer.cursorY, 0);
