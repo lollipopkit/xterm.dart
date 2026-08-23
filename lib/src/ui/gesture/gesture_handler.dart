@@ -974,18 +974,12 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
 
     final cellOffset = renderTerminal.getCellOffset(details.localPosition);
 
-    if (details.kind == PointerDeviceKind.touch) {
-      // 触摸设备：选中整个单词
-      final BufferRangeLine? wordRange = renderTerminal.selectWord(cellOffset);
-      if (wordRange != null) {
-        _applySelection(wordRange);
-      }
-    } else {
-      // 鼠标设备：选中单个字符
-      renderTerminal.selectCharacters(cellOffset, cellOffset);
-      if (widget.terminalController.selection != null) {
-        _applySelection(BufferRangeLine(cellOffset, cellOffset));
-      }
+    // A word, whatever the pointer was. A second click is what asks for the
+    // word under it, in a text field and in every other terminal; the mouse
+    // used to get a single cell here, which is what one click already gives.
+    final BufferRangeLine? wordRange = renderTerminal.selectWord(cellOffset);
+    if (wordRange != null) {
+      _applySelection(wordRange);
     }
 
     // 显示工具栏（触摸和鼠标设备统一处理）
@@ -996,8 +990,11 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
       }
     }
 
-    // 提供触觉反馈
-    HapticFeedback.lightImpact();
+    // Only where there is something to feel it: a mouse double click on a
+    // desktop would buzz the phone-shaped part of the API for nothing.
+    if (details.kind == PointerDeviceKind.touch) {
+      HapticFeedback.lightImpact();
+    }
   }
 
   void onScaleStart(ScaleStartDetails details) {
