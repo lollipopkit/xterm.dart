@@ -33,7 +33,7 @@ class _LineBuilder {
     _result.resize(_length + 1);
 
     // Narrowed in the copy rather than by a second write, so the cell keeps
-    // whatever else its content says — its cluster, in particular, which
+    // whatever else its content says, its cluster in particular, which
     // rewriting the content from the code point alone would drop.
     final cell = src.createCellData(index);
     cell.content =

@@ -45,7 +45,7 @@ Future<void> main(List<String> args) async {
     ..addAll(_range(0x1160, 0x11FF));
 
   // Wide is East Asian Wide or Fullwidth, less anything already zero: the two
-  // properties overlap — the Japanese voiced sound marks are `W` *and* `Mn` —
+  // properties overlap (the Japanese voiced sound marks are `W` *and* `Mn`),
   // and a mark that occupies a column would push the rest of its line off the
   // grid.
   final wide = _codePoints(eastAsian, const {'W', 'F'})

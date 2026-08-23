@@ -60,7 +60,7 @@ class TerminalPainter {
   /// 17.8 ms.
   final _runCache = ParagraphCache<RunKey>(2048);
 
-  /// Laid out clusters — the cells holding a base character and its combining
+  /// Laid out clusters, the cells holding a base character and its combining
   /// marks. Kept apart from [_runCache] rather than sharing its keys because a
   /// cluster is laid out with the font's default features: composing a base and
   /// its marks into one glyph is the shaping a run turns off. Small because a
@@ -76,7 +76,7 @@ class TerminalPainter {
   /// This is deliberately not used for cells that *do* coalesce. A run already
   /// draws its whole span in one call, where the atlas would write a sprite per
   /// cell into the arrays below; for a screen of plain text that is more work,
-  /// not less. What the atlas fixes is the case coalescing cannot reach — a
+  /// not less. What the atlas fixes is the case coalescing cannot reach: a
   /// cell whose neighbours differ, or a wide character, which under the
   /// paragraph cache needs a layout keyed by its colour as well as its glyph.
   /// A screen where every cell has a colour of its own then misses the cache on
@@ -655,10 +655,11 @@ class TerminalPainter {
     _spriteTransforms[at] = 1 / _devicePixelRatio;
     _spriteTransforms[at + 1] = 0;
     _spriteTransforms[at + 2] =
-        ((offset.dx * _devicePixelRatio).roundToDouble() - sprite.dxOffset) /
+        ((offset.dx * _devicePixelRatio).roundToDouble() - sprite.margin) /
         _devicePixelRatio;
     _spriteTransforms[at + 3] =
-        (offset.dy * _devicePixelRatio).roundToDouble() / _devicePixelRatio;
+        ((offset.dy * _devicePixelRatio).roundToDouble() - sprite.margin) /
+        _devicePixelRatio;
 
     final source = sprite.source;
     _spriteRects[at] = source.left;

@@ -235,7 +235,7 @@ _Painted _paintLine(
   );
 
   final recorder = PictureRecorder();
-  final canvas = _RecordingCanvas(Canvas(recorder));
+  final canvas = _RecordingCanvas(Canvas(recorder), dpr);
   painter.paintLine(canvas, Offset.zero, terminal.buffer.lines[0]);
   recorder.endRecording().dispose();
 
@@ -316,23 +316,27 @@ class _ParagraphOp extends _Op {
 /// One `drawRawAtlas` batch, which is how a line draws every cell that could
 /// not join a run.
 class _AtlasOp extends _Op {
-  _AtlasOp(this.transforms, this.rects);
+  _AtlasOp(this.transforms, this.rects, this.devicePixelRatio);
 
   final Float32List transforms;
   final Float32List rects;
 
+  /// The source rects are in device pixels where the transforms and the cell
+  /// grid are logical, so taking the margin off needs both in one unit.
+  final double devicePixelRatio;
+
   @override
   List<_Glyph> glyphs(double cellWidth) {
+    final margin = GlyphAtlas.padding * cellWidth;
+
     return [
       for (var i = 0; i < rects.length ~/ 4; i++)
-        // A sprite carries padding either side and is placed by its own left
+        // A sprite carries a margin on every side and is placed by its own left
         // edge, on a whole device pixel. Undoing the first two gives the column
         // it is in, to within the rounding the third does.
         _Glyph(
-          transforms[i * 4 + 2] + GlyphAtlas.padding * cellWidth,
-          rects[i * 4 + 2] -
-              rects[i * 4] -
-              2 * GlyphAtlas.padding * cellWidth,
+          transforms[i * 4 + 2] + margin,
+          (rects[i * 4 + 2] - rects[i * 4]) / devicePixelRatio - 2 * margin,
           null,
         ),
     ];
@@ -346,9 +350,10 @@ class _AtlasOp extends _Op {
 /// reaches [noSuchMethod] and throws: a line painter that starts drawing
 /// something else should fail here rather than have it go unrecorded.
 class _RecordingCanvas implements Canvas {
-  _RecordingCanvas(this._inner);
+  _RecordingCanvas(this._inner, this.devicePixelRatio);
 
   final Canvas _inner;
+  final double devicePixelRatio;
 
   final ops = <_Op>[];
 
@@ -374,7 +379,7 @@ class _RecordingCanvas implements Canvas {
     Rect? cullRect,
     Paint paint,
   ) {
-    ops.add(_AtlasOp(rstTransforms, rects));
+    ops.add(_AtlasOp(rstTransforms, rects, devicePixelRatio));
     _inner.drawRawAtlas(
       atlas,
       rstTransforms,

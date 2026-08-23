@@ -5,8 +5,8 @@ import 'package:xterm/src/utils/unicode_width.dart';
 // asserting is not their contents but that the generated file is the version
 // it claims and that the lookup reads it correctly.
 //
-// The width cases below are the ones that *changed* between 12.1 — which is
-// what this package carried while the file was named `unicode_v11.dart` — and
+// The width cases below are the ones that *changed* between 12.1, which is
+// what this package carried while the file was named `unicode_v11.dart`, and
 // 16.0. A regeneration that quietly dropped a block would leave these at their
 // old answers, which is exactly what a table nobody checks does.
 
@@ -38,22 +38,25 @@ void main() {
   });
 
   group('widths that 12.1 got wrong', () {
-    // Each was 1 under 12.1 because the code point was unassigned then. A
-    // terminal that still thinks so puts the rest of the line one or two
-    // columns off from where the program writing it believes the cursor is.
+    // Most of these were 1 under 12.1 because the code point was unassigned
+    // then. Two were not: U+4DC0 and U+1D300 have been assigned since Unicode
+    // 4.0, and East_Asian_Width called them Neutral until they were corrected
+    // to Wide. Either way a terminal that still believes 12.1 puts the rest of
+    // the line one or two columns off from where the program writing it
+    // believes the cursor is.
     const nowWide = {
-      0x4DC0: 'hexagram for the creative heaven (BMP, Yijing)',
+      0x4DC0: 'hexagram for the creative heaven, N in 12.1 and W in 16',
+      0x1D300: 'monogram for earth, N in 12.1 and W in 16',
       0x1FA96: 'military helmet (Unicode 13 emoji)',
       0x1FAE0: 'melting face (Unicode 14 emoji)',
       0x1FADF: 'splatter (Unicode 16 emoji)',
-      0x18AF3: 'Tangut components supplement',
-      0x1D300: 'monogram for earth',
+      0x18AF3: 'Tangut component-756',
     };
     const nowZero = {
-      0x1AC0: 'combining latin small letter turned w (Unicode 15)',
-      0x1CF00: 'Vedic sign Rthang long anusvara',
-      0x13447: 'Egyptian hieroglyph modifier damaged',
-      0x1611E: 'Znamenny combining mark',
+      0x1AC0: 'combining latin small letter turned w below (Unicode 15)',
+      0x1CF00: 'Znamenny combining mark gorazdo nizko s kryzhem on left',
+      0x13447: 'Egyptian hieroglyph modifier damaged at top start',
+      0x1611E: 'Gurung Khema vowel sign AA',
     };
 
     nowWide.forEach((codePoint, name) {
@@ -103,22 +106,37 @@ void main() {
   });
 
   group('the tables agree with each other', () {
-    test('nothing is both zero-width and wide', () {
-      // A code point in both would take whichever `buildTable` filled last,
-      // silently. The generator subtracts one set from the other so that the
-      // question cannot arise; this is what says it still does.
-      for (final table in [BMP_WIDE, HIGH_WIDE]) {
+    test('every code point reads back the width its table claims', () {
+      // A code point in both tables would take whichever `buildTable` filled
+      // last, silently. The generator subtracts one set from the other so the
+      // question cannot arise, and reading every entry of both back is what
+      // says it still does: an overlap shows up as one of them answering the
+      // other's width.
+      //
+      // Collected and asserted once rather than per code point, because there
+      // are a quarter of a million of them and a matcher call each is the
+      // difference between a fast test and a slow one.
+      final wrong = <String>[];
+
+      void check(List<List<int>> table, int width) {
         for (final range in table) {
           for (var cp = range[0]; cp <= range[1]; cp++) {
-            expect(
-              unicodeWidth.wcwidth(cp),
-              2,
-              reason: 'U+${cp.toRadixString(16).toUpperCase()} is in a wide '
-                  'table but does not read back as wide',
-            );
+            if (unicodeWidth.wcwidth(cp) != width) {
+              wrong.add('U+${cp.toRadixString(16).toUpperCase()}');
+            }
           }
         }
       }
+
+      check(BMP_WIDE, 2);
+      check(HIGH_WIDE, 2);
+      // The control characters are zero by rule rather than by table, and the
+      // tables do not claim them, so this is only the ranges themselves.
+      check(BMP_COMBINING, 0);
+      check(HIGH_COMBINING, 0);
+
+      expect(wrong, isEmpty, reason: 'code points that read back another '
+          "table's width");
     });
 
     test('every range is ascending and disjoint from the next', () {

@@ -11,8 +11,9 @@
 // What is measured: the time to *record* a screenful of paint operations, and
 // how many draws that recording issues. `glyphs` counts cells, whether each
 // reached the canvas inside a coalesced paragraph or as a sprite in the line's
-// atlas batch; `calls` counts the draws themselves, which is the quantity the
-// two together are meant to keep down.
+// atlas batch; `calls` counts the draws themselves. The ratio between them is
+// how much of the screen each draw carried, which is what coalescing and the
+// atlas are each for.
 // GPU rasterisation is deliberately not measured: forcing it from a test
 // needs an async `toByteData` round trip whose cost is dominated by the
 // readback rather than by the drawing. Draw-call count is the quantity the
@@ -108,7 +109,7 @@ _Result _run(_Profile profile, int cols, int rows) {
   // Count on a throwaway pass, so the counting wrapper's own overhead stays
   // out of the timed pass below.
   final countingRecorder = PictureRecorder();
-  final counting = _CountingCanvas(Canvas(countingRecorder));
+  final counting = _CountingCanvas(Canvas(countingRecorder), painter.cellSize.width);
   _paintFrame(painter, terminal, counting, rows);
   countingRecorder.endRecording().dispose();
 
@@ -161,9 +162,15 @@ void _paintFrame(
 /// the intent. A painter that starts using another primitive should fail here
 /// rather than silently go uncounted.
 class _CountingCanvas implements Canvas {
-  _CountingCanvas(this._inner);
+  _CountingCanvas(this._inner, this._cellWidth);
 
   final Canvas _inner;
+
+  /// Needed because a coalesced paragraph carries a whole run, and the number
+  /// of cells in it is not otherwise recoverable from a [Paragraph]. Under
+  /// `flutter test` every glyph is exactly one cell wide, so its laid out width
+  /// divided by this is how many cells it drew.
+  final double _cellWidth;
 
   var glyphs = 0;
   var calls = 0;
@@ -171,7 +178,7 @@ class _CountingCanvas implements Canvas {
 
   @override
   void drawParagraph(Paragraph paragraph, Offset offset) {
-    glyphs++;
+    glyphs += max(1, (paragraph.maxIntrinsicWidth / _cellWidth).round());
     calls++;
     _inner.drawParagraph(paragraph, offset);
   }

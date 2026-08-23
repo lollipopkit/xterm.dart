@@ -7,19 +7,21 @@ import 'package:xterm/xterm.dart';
 // terminal draws them on the wrong character. Each mutation therefore gets its
 // own case here.
 //
-// The marks are written as escapes throughout. A combining character in a
-// source literal is invisible, so a literal that got mangled in an edit would
-// read as a passing test asserting nothing.
+// The marks are named as escapes rather than written literally. A combining
+// character in a source literal is invisible, so one that got mangled in an
+// edit would read as a passing test asserting nothing.
 
 /// COMBINING ACUTE ACCENT.
-const acute = '́';
+const acute = '\u0301';
 
 /// COMBINING DIAERESIS.
-const diaeresis = '̈';
+const diaeresis = '\u0308';
 
-const zwj = '‍';
+/// ZERO WIDTH JOINER.
+const zwj = '\u200D';
 
-const vs16 = '️';
+/// VARIATION SELECTOR-16, which asks for the emoji rendering of what precedes.
+const vs16 = '\uFE0F';
 
 void main() {
   group('Buffer.writeChar', () {
@@ -310,6 +312,28 @@ void main() {
 
       expect(dst.getCluster(0), 'b$acute');
       expect(dst.getContent(0) & CellContent.clusterFlag, isNot(0));
+    });
+
+    test('setContent will not leave the flag on without an entry', () {
+      // The two are one fact, and a reader is entitled to take the entry once
+      // it has seen the flag. Copying a content word from a cell that has a
+      // cluster is the natural way to break that.
+      final line = _lineWith({0: 'e$acute'});
+
+      line.setContent(1, line.getContent(0));
+
+      expect(line.getCluster(1), isNull);
+      expect(line.getContent(1) & CellContent.clusterFlag, 0);
+    });
+
+    test('shrinking takes the flag off with the entry', () {
+      final line = _lineWith({4: 'e$acute'});
+
+      line.resize(3);
+      line.resize(6);
+
+      expect(line.getCluster(4), isNull);
+      expect(line.getContent(4) & CellContent.clusterFlag, 0);
     });
 
     test('a CellData with no cluster clears both the entry and the flag', () {

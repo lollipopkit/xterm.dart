@@ -11,16 +11,16 @@ import 'package:xterm/src/ui/themes.dart';
 
 // The atlas rasterises a glyph once and tints it when it draws, where the
 // paragraph path lays the glyph out in its colour. That is not something the
-// draw calls can say anything about — it is a claim about pixels — so the tests
+// draw calls can say anything about; it is a claim about pixels, so the tests
 // below render both and compare the images.
 //
 // Not byte for byte, and the reason is worth stating: the rasteriser adjusts a
 // glyph's contrast for the colour it is drawn in, so a white mask tinted red
 // has slightly different edge pixels from red text. It is confined to the
 // partially covered pixels, and no atlas can avoid it. What [_expectSameInk]
-// asserts is therefore the part that *is* exact — a pixel the reference covers
-// fully is the same colour, and a pixel it does not cover at all is untouched —
-// which is enough to catch the mistakes an atlas actually makes: a sprite off
+// asserts is therefore the part that *is* exact: a pixel the reference covers
+// fully is the same colour, and a pixel it does not cover at all is untouched.
+// That is enough to catch the mistakes an atlas actually makes: a sprite off
 // by a pixel, at the wrong scale, or tinted with the wrong colour.
 //
 // It cannot check a real font. Every glyph here is the FlutterTest font's
@@ -147,15 +147,20 @@ void main() {
       }
     });
 
-    test('a slot carries a cell of padding either side', () {
+    test('a slot carries a margin on every side', () {
       final narrow = atlas.sprite((0x41, 0), 1)!;
       final wide = atlas.sprite((0x4E00, 0), 2)!;
 
-      // Cell width 8 at a ratio of 2 is 16 device pixels, and the padding is
-      // measured in those.
-      expect(narrow.source.width, (1 + 2 * GlyphAtlas.padding) * 16);
-      expect(wide.source.width, (2 + 2 * GlyphAtlas.padding) * 16);
-      expect(narrow.dxOffset, GlyphAtlas.padding * 16);
+      // The cell is 8 by 16 at a ratio of 2, so 16 by 32 device pixels, and the
+      // margin is a cell *width* on all four sides: 16.
+      expect(narrow.margin, GlyphAtlas.padding * 16);
+      expect(narrow.source.width, 16 + 2 * narrow.margin);
+      expect(wide.source.width, 32 + 2 * narrow.margin);
+
+      // Vertical too, or a glyph reaching above the line box is cut off where
+      // drawing the paragraph straight to the canvas would have kept it.
+      expect(narrow.source.height, 32 + 2 * narrow.margin);
+      expect(wide.source.height, narrow.source.height);
     });
 
     test('the pen wraps rather than running off the edge', () {
@@ -258,7 +263,7 @@ Future<Uint8List> _paint(
 /// should be is asserted separately, in painter_test.dart.
 ///
 /// The columns are snapped to whole device pixels, because that is what the
-/// atlas does and it is deliberate — see [GlyphAtlas]. Comparing against an
+/// atlas does and it is deliberate; see [GlyphAtlas]. Comparing against an
 /// unsnapped reference would be asserting that a glyph atlas does not round,
 /// which is the one thing every glyph atlas does.
 Future<Uint8List> _reference(

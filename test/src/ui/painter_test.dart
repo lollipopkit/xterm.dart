@@ -12,9 +12,9 @@ import 'package:xterm/src/ui/themes.dart';
 // A cell that is not part of a run is drawn out of the glyph atlas: one sprite,
 // rasterised without a colour and tinted as it is drawn. So the two things
 // worth asserting about a cell are which atlas entry it used and what colour it
-// was tinted. The source rect names the entry — two cells share one exactly
-// when they share a rect — and neither needs an API the package does not
-// already have.
+// was tinted. The source rect names the entry: two cells share one exactly
+// when they share a rect. Neither needs an API the package does not already
+// have.
 //
 // Which of those two a property belongs to is the whole design. A style flag
 // changes the entry; a colour does not, and that is what stops a screen of
@@ -131,7 +131,7 @@ void main() {
     });
 
     test('faint halves the alpha and keeps the entry', () {
-      // Unlike blink, faint does change the colour — but not the glyph.
+      // Unlike blink, faint does change the colour, but not the glyph.
       final plain = _paint(painter, _cell(foreground: _rgb(0xFF0000)));
       final faint = _paint(
         painter,

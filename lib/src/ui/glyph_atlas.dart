@@ -17,21 +17,25 @@ typedef AtlasKey = (int charCode, int styleFlags);
 /// Where a glyph sits in the atlas, and where its sprite sits relative to the
 /// cell it is drawn into.
 class AtlasSprite {
-  const AtlasSprite(this.source, this.dxOffset);
+  const AtlasSprite(this.source, this.margin);
 
   /// The sprite's rect in atlas pixels.
   final Rect source;
 
-  /// How far left of the cell's own left edge the sprite starts, in *device*
-  /// pixels. This is [GlyphAtlas.padding] wide, and it is what lets an italic
-  /// or a fallback font's glyph spill outside its column the way it does when
-  /// the paragraph is drawn straight to the canvas.
+  /// How far outside the cell the sprite starts, on every side, in *device*
+  /// pixels. This is what lets a glyph spill past its column (an italic tail, a
+  /// fallback font's accent above the line box, a deep descender) the way it
+  /// does when the paragraph is drawn straight to the canvas, which clips
+  /// nothing.
+  ///
+  /// One value for all four sides rather than one per axis: they are equal, and
+  /// two fields for one number is a way for them to stop being.
   ///
   /// Device pixels and a whole number of them, because that is what keeps a
   /// sprite crisp: the glyph is rasterised at a whole pixel inside the atlas
   /// and drawn to a whole pixel on screen, so it is copied rather than
   /// resampled. See [GlyphAtlas].
-  final double dxOffset;
+  final double margin;
 }
 
 /// A texture of laid out glyphs, drawn through [Canvas.drawRawAtlas].
@@ -61,7 +65,7 @@ class AtlasSprite {
 /// built by drawing the old one into it and appending only what is new, which
 /// is exact because slots are only ever appended and never move. Redrawing
 /// every glyph instead is what it looks like it should do, and costs a screen
-/// of unfamiliar text — a page of CJK, say — 129 ms on its first frame, since
+/// of unfamiliar text, a page of CJK say, 129 ms on its first frame, since
 /// each of the seventy lines asks for the image and each ask redraws
 /// everything added so far.
 class GlyphAtlas {
@@ -75,13 +79,24 @@ class GlyphAtlas {
        _textScaler = textScaler,
        _styleFor = styleFor;
 
-  /// How far outside its column a glyph may reach and still be kept whole, as
-  /// a multiple of the cell width, on each side.
+  /// How far outside its cell a glyph may reach and still be kept whole, as a
+  /// multiple of the cell *width*, on every side.
   ///
-  /// Drawing a paragraph straight to the canvas clips nothing, so a sprite that
-  /// covered only its own column would cut the tail off an italic `f` where the
-  /// old path drew it. One cell each side covers what a monospace font does;
-  /// the cost is that a one-column glyph occupies three columns of atlas.
+  /// Drawing a paragraph straight to the canvas clips nothing, so a slot that
+  /// covered only the cell would cut the tail off an italic `f`, or the top off
+  /// an accent a fallback font draws above the line box. The width is the unit
+  /// on both axes because it is the smaller of the two, so it is the tighter
+  /// bound to spend atlas on.
+  ///
+  /// What it costs is capacity, and the margin on the vertical axis costs most
+  /// of it: a slot goes from one cell tall to about two, so a 2048-pixel atlas
+  /// holds on the order of a thousand glyphs rather than three thousand. Past
+  /// that a glyph is refused and drawn as a paragraph, which is what every
+  /// glyph did before the atlas existed: a screen with thousands of distinct
+  /// characters falls back rather than breaking. The benchmark's `cjk` profile
+  /// is exactly that screen, and it is where the trade shows: 0.55 ms a frame
+  /// with the whole repertoire in the atlas, 1.09 ms with the margin and the
+  /// overflow it causes, against 1.64 ms with no atlas at all.
   static const padding = 1;
 
   /// The atlas stops growing here, in device pixels on either axis. Past it a
@@ -111,16 +126,16 @@ class GlyphAtlas {
   var _penX = 0.0;
   var _penY = 0.0;
 
-  /// The padding either side of a glyph, in whole device pixels.
-  late final double _padding =
+  /// The margin around a glyph, in whole device pixels.
+  late final double _margin =
       (padding * _cellSize.width * _devicePixelRatio).roundToDouble();
 
   late final double _slotHeight =
-      (_cellSize.height * _devicePixelRatio).ceilToDouble();
+      (_cellSize.height * _devicePixelRatio).ceilToDouble() + 2 * _margin;
 
   double _slotWidth(int cells) {
     return (cells * _cellSize.width * _devicePixelRatio).ceilToDouble() +
-        2 * _padding;
+        2 * _margin;
   }
 
   /// How many sprites the atlas holds. For tests and for the benchmark.
@@ -165,7 +180,7 @@ class GlyphAtlas {
 
     final sprite = AtlasSprite(
       Rect.fromLTWH(_penX, _penY, width, _slotHeight),
-      _padding,
+      _margin,
     );
     _penX += width;
 
@@ -215,8 +230,8 @@ class GlyphAtlas {
       canvas.drawParagraph(
         _paragraphs[key]!,
         Offset(
-          (sprite.source.left + sprite.dxOffset) / _devicePixelRatio,
-          sprite.source.top / _devicePixelRatio,
+          (sprite.source.left + sprite.margin) / _devicePixelRatio,
+          (sprite.source.top + sprite.margin) / _devicePixelRatio,
         ),
       );
     }

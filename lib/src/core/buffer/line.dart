@@ -40,10 +40,13 @@ class BufferLine with IndexedItem {
   /// lines is never: a map per line would cost more than the feature.
   ///
   /// A column appears here exactly when its content has
-  /// [CellContent.clusterFlag], and the string always starts with that cell's
-  /// own code point. Every mutation below either routes through a setter that
-  /// drops the entry or moves it explicitly; a stale entry would put one cell's
-  /// marks on whatever text replaced it.
+  /// [CellContent.clusterFlag], in both directions, which is what lets a
+  /// reader use the flag as a cheap gate and then take the entry. The string
+  /// always starts with that cell's own code point.
+  ///
+  /// Every mutation below either routes through a setter that drops the entry
+  /// or moves it explicitly; a stale entry would put one cell's marks on
+  /// whatever text replaced it.
   Map<int, String>? _clusters;
 
   int getForeground(int index) {
@@ -70,8 +73,8 @@ class BufferLine with IndexedItem {
     return _data[index * _cellSize + _cellContent] >> CellContent.widthShift;
   }
 
-  /// The whole text of the cell at [index] — its base character followed by the
-  /// combining marks or joined code points that belong to it — or null when the
+  /// The whole text of the cell at [index]: its base character followed by the
+  /// combining marks or joined code points that belong to it. Null when the
   /// cell is the single code point [getCodePoint] returns.
   String? getCluster(int index) {
     return _clusters?[index];
@@ -114,7 +117,11 @@ class BufferLine with IndexedItem {
   }
 
   void setContent(int index, int value) {
-    _data[index * _cellSize + _cellContent] = value;
+    // The flag is taken off [value] rather than trusted. It says this line
+    // holds text for the cell, and this call is what replaces that text; a
+    // caller passing a content word read from another cell would otherwise
+    // leave the cell claiming a cluster the line does not have.
+    _data[index * _cellSize + _cellContent] = value & ~CellContent.clusterFlag;
     _clusters?.remove(index);
   }
 
@@ -321,11 +328,15 @@ class BufferLine with IndexedItem {
     _length = length;
 
     // Shrinking leaves the words of the cells that fell off the end in place,
-    // so growing again can bring them back. Their clusters do not come back
-    // with them: [getCluster] answering null for a cell whose flag is set costs
-    // the marks, where keeping the entry would put them on whatever the column
-    // holds by then.
-    _clusters?.removeWhere((index, _) => index >= _length);
+    // so growing again can bring them back. Their clusters do not, since by
+    // then the column may hold something else. The flag goes with the entry,
+    // because a cell claiming a cluster the line does not have is a state the
+    // readers are entitled to assume cannot happen.
+    _clusters?.removeWhere((index, _) {
+      if (index < _length) return false;
+      _data[index * _cellSize + _cellContent] &= ~CellContent.clusterFlag;
+      return true;
+    });
 
     if (_length > 0 && getWidth(_length - 1) == 2) {
       resetCell(_length - 1);

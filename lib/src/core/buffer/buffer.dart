@@ -109,8 +109,8 @@ class Buffer {
   /// characters are not interpreted and directly added to the buffer.
   ///
   /// Returns the code point that was written after charset translation, or
-  /// null if the code point did not become a cell of its own — because it
-  /// joined the cluster of the cell before it, or because there was no such
+  /// null if the code point did not become a cell of its own, because it
+  /// joined the cluster of the cell before it or because there was no such
   /// cell and it was dropped. `repeatPreviousCharacter` reads that return
   /// value, and a combining mark is not what REP should repeat.
   ///
@@ -212,8 +212,12 @@ class Buffer {
       return false;
     }
 
-    final cluster = line.getCluster(x)!;
-    return cluster.codeUnitAt(cluster.length - 1) == _zeroWidthJoiner;
+    // The flag is the gate and the text is the answer. They cannot disagree,
+    // but reading the one that can be absent is what keeps a hole in that
+    // invariant from being a crash rather than a missing mark.
+    final cluster = line.getCluster(x);
+    return cluster != null &&
+        cluster.codeUnitAt(cluster.length - 1) == _zeroWidthJoiner;
   }
 
   /// Appends [codePoint] to the text of the cell it belongs to, if there is
@@ -237,7 +241,7 @@ class Buffer {
   }
 
   /// The cell a zero-width or continuing code point attaches to, or null when
-  /// there is none — at the start of the buffer, or after a column nothing has
+  /// there is none: at the start of the buffer, or after a column nothing has
   /// been written to.
   (BufferLine, int)? _clusterTarget() {
     var line = currentLine;
