@@ -450,6 +450,28 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
   void _notifyEditableRect() {
     final cursor = localToGlobal(cursorOffset);
 
+    // Skipped rather than sent when it is not a real rectangle.
+    //
+    // The editable rect goes to the engine as JSON, and JSON has no NaN: a
+    // non-finite one throws `JsonUnsupportedObjectError` inside the platform
+    // channel, from a timer callback with nothing above it to catch it. It has
+    // been seen on a device, through `Terminal.write` on a session flush.
+    //
+    // **Why the geometry goes non-finite is not known.** Offstage, a zero-size
+    // box and an ancestor at scale zero were all tried and all stay finite —
+    // see `test/src/ui/editable_rect_test.dart`, which records that rather
+    // than pretending to reproduce it. So this is a guard and not a fix: it
+    // costs one skipped update, and the next write, frame or caret move sends
+    // another.
+    //
+    // A candidate worth keeping in mind if it is chased again: this runs from
+    // `_onTerminalChange`, immediately after `markNeedsLayout` and therefore
+    // before the layout it just invalidated — so both `size` and the paint
+    // transform are read a frame stale by construction.
+    if (!cursor.isFinite || !_painter.cellSize.isFinite || !size.isFinite) {
+      return;
+    }
+
     final rect = Rect.fromLTRB(
       cursor.dx,
       cursor.dy,
