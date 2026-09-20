@@ -448,6 +448,15 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
   }
 
   void _notifyEditableRect() {
+    final onEditableRect = _onEditableRect;
+    if (onEditableRect == null) return;
+
+    // Called from [_onTerminalChange] and [_onScroll], neither of which is a
+    // layout pass — the terminal is written to from a socket. So there may not
+    // be a size to read yet, and [localToGlobal] has nothing to answer with
+    // until there is.
+    if (!hasSize) return;
+
     final cursor = localToGlobal(cursorOffset);
 
     // Skipped rather than sent when it is not a real rectangle.
@@ -481,7 +490,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
 
     final caretRect = cursor & _painter.cellSize;
 
-    _onEditableRect?.call(rect, caretRect);
+    onEditableRect(rect, caretRect);
   }
 
   /// Update the viewport size in cells based on the current widget size in
