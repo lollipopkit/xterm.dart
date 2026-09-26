@@ -439,8 +439,6 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
     newWidth = max(newWidth, 1);
     newHeight = max(newHeight, 1);
 
-    onResize?.call(newWidth, newHeight, pixelWidth ?? 0, pixelHeight ?? 0);
-
     //we need to resize both buffers so that they are ready when we switch between them
     _altBuffer.resize(_viewWidth, _viewHeight, newWidth, newHeight);
     _mainBuffer.resize(_viewWidth, _viewHeight, newWidth, newHeight);
@@ -454,6 +452,13 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
 
     _altBuffer.resetVerticalMargins();
     _mainBuffer.resetVerticalMargins();
+
+    // Last, once the terminal already is the new size. The callback tells the
+    // far end, and that can fail — an SSH channel whose transport has closed
+    // throws. Called first, a throw left both buffers at the old size while
+    // the view had moved on to the new one, and it is not retried: every later
+    // paint and write then indexed rows the buffer does not have.
+    onResize?.call(newWidth, newHeight, pixelWidth ?? 0, pixelHeight ?? 0);
   }
 
   @override

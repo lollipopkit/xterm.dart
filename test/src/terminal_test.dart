@@ -2,6 +2,36 @@ import 'package:test/test.dart';
 import 'package:xterm/core.dart';
 
 void main() {
+  group('Terminal.resize', () {
+    test('a throwing onResize leaves the terminal at the new size', () {
+      // What an SSH session with a closed transport does. Called before the
+      // buffers were resized, the throw left them at the old size while the
+      // view had already moved on, and nothing retried it.
+      final terminal = Terminal(maxLines: 100)
+        ..onResize = (_, _, _, _) => throw StateError('closed');
+
+      expect(() => terminal.resize(40, 30), throwsStateError);
+
+      expect(terminal.viewWidth, 40);
+      expect(terminal.viewHeight, 30);
+      expect(terminal.buffer.height, 30);
+      // Writing to the last row reads the rows the new size has.
+      terminal.write('\x1b[30;1H${'x' * 40}\n');
+    });
+
+    test('onResize is told the size the terminal now is', () {
+      final seen = <(int, int, int, int)>[];
+      final terminal = Terminal()
+        ..onResize = (w, h, pw, ph) {
+          seen.add((w, h, pw, ph));
+        };
+
+      terminal.resize(100, 40, 800, 600);
+
+      expect(seen, [(100, 40, 800, 600)]);
+    });
+  });
+
   group('Terminal.write', () {
     test('empty writes do not notify listeners', () {
       final terminal = Terminal();
