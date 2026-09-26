@@ -219,6 +219,14 @@ class TerminalViewState extends State<TerminalView>
   RenderTerminal get renderTerminal =>
       _viewportKey.currentContext!.findRenderObject() as RenderTerminal;
 
+  /// [renderTerminal], or null while the viewport is not mounted or not yet
+  /// laid out — which a widget built beside it can see: its build can run
+  /// before the viewport's element exists, and in the frame it is replaced.
+  RenderTerminal? get laidOutRenderTerminal {
+    final render = _viewportKey.currentContext?.findRenderObject();
+    return render is RenderTerminal && render.hasSize ? render : null;
+  }
+
   late final textSizeNoti = ValueNotifier(widget.textStyle.fontSize);
 
   /// Slides the selection highlight from where it was to where it now is.

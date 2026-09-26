@@ -405,6 +405,11 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
   }
 
   _SelectionGeometry? _selectionGeometry(BufferRangeLine range) {
+    // Asked while building the handles, which can come before the viewport
+    // has a render object at all; then there is nothing to place them against
+    // yet, and the next frame asks again.
+    final renderTerminal = terminalView.laidOutRenderTerminal;
+    if (renderTerminal == null) return null;
     final BufferRangeLine normalized = range.normalized;
     final Size cellSize = renderTerminal.cellSize;
     final Offset startTopLeft = renderTerminal.getOffset(normalized.begin);
