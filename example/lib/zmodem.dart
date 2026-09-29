@@ -4,7 +4,7 @@ import 'dart:typed_data';
 
 import 'package:dartssh2/dartssh2.dart';
 import 'package:file_picker/file_picker.dart';
-import 'package:cupertino_ui/cupertino_ui.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:path/path.dart' as path;
 import 'package:xterm/xterm.dart';
 
@@ -20,7 +20,7 @@ void main() {
 class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
-    return CupertinoApp(
+    return MaterialApp(
       title: 'xterm.dart demo',
       home: MyHomePage(),
     );
@@ -161,14 +161,9 @@ class _MyHomePageState extends State<MyHomePage> {
 
   @override
   Widget build(BuildContext context) {
-    return CupertinoPageScaffold(
-      navigationBar: CupertinoNavigationBar(
-        middle: Text(title),
-        backgroundColor: CupertinoTheme.of(context)
-            .barBackgroundColor
-            .withValues(alpha: 0.5),
-      ),
-      child: TerminalView(terminal),
+    return Scaffold(
+      appBar: AppBar(title: Text(title)),
+      body: TerminalView(terminal),
     );
   }
 }

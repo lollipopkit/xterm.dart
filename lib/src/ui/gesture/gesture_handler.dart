@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:math' as math;
 
-import 'package:cupertino_ui/cupertino_ui.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:material_ui/material_ui.dart';
@@ -123,28 +122,17 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
   ///
   /// A finger covers the text it is pointing at, which is the whole reason a
   /// text field shows one; the terminal was asking people to place a boundary
-  /// they could not see. The configuration is the platform's own, so this is
-  /// a Cupertino loupe on iOS and a Material one on Android, and on a desktop
-  /// [MagnifierConfiguration.magnifierBuilder] returns null and nothing is
-  /// shown — which is right, since a mouse hides nothing.
+  /// they could not see. It is the Material loupe on touch platforms, and on
+  /// a desktop [_magnifierBuilder] returns null and nothing is shown — which
+  /// is right, since a mouse hides nothing.
   final MagnifierController _magnifierController = MagnifierController();
   final ValueNotifier<MagnifierInfo> _magnifierInfo =
       ValueNotifier<MagnifierInfo>(MagnifierInfo.empty);
 
-  static final TextSelectionControls _materialSelectionControls =
+  /// Material handles on every platform, like the selection toolbar in
+  /// [CustomTextEdit].
+  static final TextSelectionControls _selectionControls =
       MaterialTextSelectionControls();
-  static final TextSelectionControls _cupertinoSelectionControls =
-      CupertinoTextSelectionControls();
-
-  TextSelectionControls get _selectionControls {
-    switch (defaultTargetPlatform) {
-      case TargetPlatform.iOS:
-      case TargetPlatform.macOS:
-        return _cupertinoSelectionControls;
-      default:
-        return _materialSelectionControls;
-    }
-  }
 
   ScrollController? _attachedScrollController;
   bool _scrollUpdateScheduled = false;
@@ -719,8 +707,7 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
       return;
     }
 
-    final builder =
-        TextMagnifier.adaptiveMagnifierConfiguration.magnifierBuilder;
+    const builder = _magnifierBuilder;
 
     // Asked before the overlay is put up rather than inside it: a platform
     // with no loupe answers null, and an overlay holding nothing would still
@@ -735,6 +722,23 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
         return builder(context, _magnifierController, _magnifierInfo)!;
       },
     );
+  }
+
+  /// [TextMagnifier.adaptiveMagnifierConfiguration] without its Cupertino
+  /// loupe on iOS.
+  static Widget? _magnifierBuilder(
+    BuildContext context,
+    MagnifierController controller,
+    ValueNotifier<MagnifierInfo> magnifierInfo,
+  ) {
+    return switch (defaultTargetPlatform) {
+      TargetPlatform.android ||
+      TargetPlatform.iOS => TextMagnifier(magnifierInfo: magnifierInfo),
+      TargetPlatform.fuchsia ||
+      TargetPlatform.linux ||
+      TargetPlatform.macOS ||
+      TargetPlatform.windows => null,
+    };
   }
 
   void _hideMagnifier() {

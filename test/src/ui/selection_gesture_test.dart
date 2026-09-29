@@ -204,7 +204,21 @@ void main() {
     await tester.pump();
 
     expect(find.byType(TextMagnifier), findsNothing);
-  });
+  }, variant: TargetPlatformVariant.only(TargetPlatform.android));
+
+  testWidgets('iOS gets the Material magnifier too', (tester) async {
+    // The adaptive configuration would build a Cupertino loupe here.
+    final harness = await _pump(tester, 'alpha beta gamma delta');
+
+    final gesture = await harness.longPressAt(8, 0);
+    await gesture.moveTo(harness.offsetOf(19, 0));
+    await tester.pump();
+
+    expect(find.byType(TextMagnifier), findsOneWidget);
+
+    await gesture.up();
+    await tester.pump();
+  }, variant: TargetPlatformVariant.only(TargetPlatform.iOS));
 }
 
 Future<_Harness> _pump(WidgetTester tester, String content) async {

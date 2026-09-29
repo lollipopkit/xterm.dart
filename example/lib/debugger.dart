@@ -3,7 +3,7 @@ import 'dart:convert';
 
 import 'package:dartssh2/dartssh2.dart';
 import 'package:example/src/virtual_keyboard.dart';
-import 'package:cupertino_ui/cupertino_ui.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:xterm/utils.dart';
 import 'package:xterm/xterm.dart';
 
@@ -19,7 +19,7 @@ void main() {
 class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
-    return CupertinoApp(
+    return MaterialApp(
       title: 'xterm.dart debugger',
       home: MyHomePage(),
     );
@@ -99,14 +99,9 @@ class _MyHomePageState extends State<MyHomePage> {
 
   @override
   Widget build(BuildContext context) {
-    return CupertinoPageScaffold(
-      navigationBar: CupertinoNavigationBar(
-        middle: Text(title),
-        backgroundColor: CupertinoTheme.of(context)
-            .barBackgroundColor
-            .withValues(alpha: 0.5),
-      ),
-      child: Column(
+    return Scaffold(
+      appBar: AppBar(title: Text(title)),
+      body: Column(
         children: [
           Expanded(
             child: Row(

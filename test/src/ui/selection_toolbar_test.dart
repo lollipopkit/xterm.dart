@@ -1,4 +1,3 @@
-import 'package:cupertino_ui/cupertino_ui.dart';
 import 'package:flutter/gestures.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
@@ -54,11 +53,9 @@ void main() {
       await tester.pump();
 
       expect(harness.controller.selection, isNotNull);
+      // `byType` matches the exact type, so the adaptive toolbar's other
+      // choices do not count.
       expect(find.byType(TextSelectionToolbar), findsOneWidget);
-
-      // The two the adaptive toolbar would have reached for instead.
-      expect(find.byType(CupertinoTextSelectionToolbar), findsNothing);
-      expect(find.byType(CupertinoDesktopTextSelectionToolbar), findsNothing);
     },
     variant: const TargetPlatformVariant(<TargetPlatform>{
       TargetPlatform.macOS,
