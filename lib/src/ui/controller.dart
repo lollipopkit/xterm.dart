@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:meta/meta.dart';
 import 'package:xterm/src/base/disposable.dart';
 import 'package:xterm/src/core/buffer/cell_offset.dart';
@@ -11,12 +11,10 @@ import 'package:xterm/src/ui/selection_mode.dart';
 
 class TerminalController with ChangeNotifier {
   TerminalController({
-    SelectionMode selectionMode = SelectionMode.line,
-    PointerInputs pointerInputs = const PointerInputs({PointerInput.tap}),
+    this._selectionMode = SelectionMode.line,
+    this._pointerInputs = const PointerInputs({PointerInput.tap}),
     bool suspendPointerInput = false,
-  }) : _selectionMode = selectionMode,
-       _pointerInputs = pointerInputs,
-       _suspendPointerInputs = suspendPointerInput;
+  }) : _suspendPointerInputs = suspendPointerInput;
 
   CellAnchor? _selectionBase;
   CellAnchor? _selectionExtent;

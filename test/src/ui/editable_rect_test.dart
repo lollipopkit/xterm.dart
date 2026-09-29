@@ -11,7 +11,7 @@
 // cause — which is worth knowing next time it is chased. The guard is a
 // mitigation: it turns an uncatchable throw into one skipped update.
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:xterm/src/ui/render.dart';
 import 'package:xterm/xterm.dart';

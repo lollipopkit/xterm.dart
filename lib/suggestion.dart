@@ -106,12 +106,10 @@ class SuggestionLayout extends SingleChildRenderObjectWidget {
 class RenderCompletionLayout extends RenderShiftedBox {
   RenderCompletionLayout(
     super.child, {
-    required ValueListenable<Rect> cursorRect,
-    required EdgeInsets padding,
+    required this._cursorRect,
+    required this._padding,
     required EdgeInsets cursorMargin,
-  })  : _cursorRect = cursorRect,
-        _padding = padding,
-        _cursorPadding = cursorMargin;
+  })  : _cursorPadding = cursorMargin;
 
   ValueListenable<Rect> _cursorRect;
   ValueListenable<Rect> get cursorRect => _cursorRect;
