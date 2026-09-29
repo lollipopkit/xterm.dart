@@ -17,14 +17,11 @@ import 'package:xterm/xterm.dart';
 /// every frame.
 class TerminalPainter {
   TerminalPainter({
-    required TerminalTheme theme,
-    required TerminalStyle textStyle,
-    required TextScaler textScaler,
-    double devicePixelRatio = 1.0,
-  }) : _textStyle = textStyle,
-       _theme = theme,
-       _textScaler = textScaler,
-       _devicePixelRatio = devicePixelRatio;
+    required this._theme,
+    required this._textStyle,
+    required this._textScaler,
+    this._devicePixelRatio = 1.0,
+  });
 
   /// A lookup table from terminal colors to Flutter colors.
   late var _colorPalette = PaletteBuilder(_theme).build();

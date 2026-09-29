@@ -4,7 +4,7 @@ import 'dart:math';
 
 import 'package:example/src/platform_menu.dart';
 import 'package:example/src/suggestion_engine.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_pty/flutter_pty.dart';
 import 'package:xterm/xterm.dart';

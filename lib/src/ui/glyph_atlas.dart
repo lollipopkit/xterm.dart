@@ -70,14 +70,11 @@ class AtlasSprite {
 /// everything added so far.
 class GlyphAtlas {
   GlyphAtlas({
-    required Size cellSize,
-    required double devicePixelRatio,
-    required TextScaler textScaler,
-    required TextStyle Function(int styleFlags) styleFor,
-  }) : _cellSize = cellSize,
-       _devicePixelRatio = devicePixelRatio,
-       _textScaler = textScaler,
-       _styleFor = styleFor;
+    required this._cellSize,
+    required this._devicePixelRatio,
+    required this._textScaler,
+    required this._styleFor,
+  });
 
   /// How far outside its cell a glyph may reach and still be kept whole, as a
   /// multiple of the cell *width*, on every side.
