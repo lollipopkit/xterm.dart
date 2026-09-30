@@ -1449,7 +1449,7 @@ class EscapeParser {
 
   final _osc = <String>[];
 
-  /// The longest OSC kept, in code units. An unterminated one otherwise holds
+  /// The longest OSC kept, in runes. An unterminated one otherwise holds
   /// every later byte in the queue and is rescanned from its start on each
   /// [write]; past this it is discarded up to its terminator instead.
   static const maxOscLength = 2 * 1024 * 1024;
