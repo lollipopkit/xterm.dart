@@ -33,6 +33,10 @@ class EscapeParser {
 
   void _process() {
     while (_queue.isNotEmpty) {
+      if (_discardingOsc) {
+        if (!_discardOsc()) return;
+        continue;
+      }
       tokenBegin = _queue.totalConsumed;
       final char = _queue.consume();
 
@@ -1445,6 +1449,40 @@ class EscapeParser {
 
   final _osc = <String>[];
 
+  /// The longest OSC kept, in runes. An unterminated one otherwise holds
+  /// every later byte in the queue and is rescanned from its start on each
+  /// [write]; past this it is discarded up to its terminator instead.
+  static const maxOscLength = 2 * 1024 * 1024;
+
+  /// Whether the rest of an over-long OSC is being dropped.
+  var _discardingOsc = false;
+
+  /// Drops the rest of an over-long OSC. Returns false while its terminator
+  /// has not arrived.
+  bool _discardOsc() {
+    while (_queue.isNotEmpty) {
+      final char = _queue.consume();
+      if (char == Ascii.BEL ||
+          char == _c1StringTerminator ||
+          _isCancelControl(char)) {
+        _discardingOsc = false;
+        return true;
+      }
+      if (char == Ascii.ESC) {
+        if (_queue.isEmpty) {
+          // Kept for the next write, which may complete ST.
+          _queue.rollback();
+          return false;
+        }
+        if (_queue.consume() == Ascii.backslash) {
+          _discardingOsc = false;
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
   bool _consumeStringControl() {
     while (true) {
       if (_queue.isEmpty) {
@@ -1478,6 +1516,7 @@ class EscapeParser {
   bool _consumeOsc() {
     _osc.clear();
     final param = StringBuffer();
+    var length = 0;
 
     while (true) {
       if (_queue.isEmpty) {
@@ -1485,6 +1524,11 @@ class EscapeParser {
       }
 
       final char = _queue.consume();
+      if (++length > maxOscLength) {
+        _osc.clear();
+        _discardingOsc = true;
+        return true;
+      }
 
       if (_isCancelControl(char)) {
         _osc.clear();
