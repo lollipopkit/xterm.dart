@@ -612,6 +612,25 @@ void main() {
       verify(handler.writeChar('Z'.codeUnitAt(0))).called(1);
     });
 
+    test('discards an over-long OSC up to its terminator', () {
+      final handler = MockEscapeHandler();
+      final parser = EscapeParser(handler);
+      final chunk = 'A' * (64 * 1024);
+
+      parser.write('\x1b]52;c;');
+      for (var sent = 0; sent <= EscapeParser.maxOscLength; sent += chunk.length) {
+        parser.write(chunk);
+      }
+      // ST split across writes, then text that must reach the terminal.
+      parser.write('\x1b');
+      parser.write('\\Z');
+      parser.write('\x1b]52;c;QQ==\x07');
+
+      verifyNever(handler.writeChar('A'.codeUnitAt(0)));
+      verify(handler.writeChar('Z'.codeUnitAt(0))).called(1);
+      verify(handler.unknownOSC('52', ['c', 'QQ=='])).called(1);
+    });
+
     test('supports split 8-bit C1 sequences', () {
       final handler = MockEscapeHandler();
       final parser = EscapeParser(handler);
