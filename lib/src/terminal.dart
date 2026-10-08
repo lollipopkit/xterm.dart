@@ -16,6 +16,7 @@ import 'package:xterm/src/core/mouse/button_state.dart';
 import 'package:xterm/src/core/mouse/handler.dart';
 import 'package:xterm/src/core/mouse/mode.dart';
 import 'package:xterm/src/core/platform.dart';
+import 'package:xterm/src/core/program_status.dart';
 import 'package:xterm/src/core/state.dart';
 import 'package:xterm/src/core/tabs.dart';
 import 'package:xterm/src/utils/ascii.dart';
@@ -64,6 +65,14 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
   /// escape sequence.
   void Function(String code, List<String> args)? onPrivateOSC;
 
+  /// Called for program status reports (OSC 7501), progress bars (OSC 9;4),
+  /// shell integration marks (OSC 133) and full resets. The terminal keeps no
+  /// records itself: feed them to a [ProgramStatusRecords].
+  ///
+  /// The terminal answers the program status query only while this is set,
+  /// so that programs don't send reports nothing reads.
+  void Function(TerminalStatusEvent event)? onStatus;
+
   /// Flag to toggle os specific behaviors.
   final TerminalTargetPlatform platform;
 
@@ -82,6 +91,7 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
     this.inputHandler = defaultInputHandler,
     this.mouseHandler = defaultMouseHandler,
     this.onPrivateOSC,
+    this.onStatus,
     this.reflowEnabled = true,
     this.wordSeparators,
   });
@@ -620,6 +630,7 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
     _mainBuffer.reset();
     _altBuffer.reset();
     _buffer = _mainBuffer;
+    onStatus?.call(const TerminalStatusReset());
   }
 
   @override
@@ -1133,6 +1144,17 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
   @override
   void setIconName(String name) {
     onIconChange?.call(name);
+  }
+
+  @override
+  void terminalStatus(TerminalStatusEvent event) {
+    onStatus?.call(event);
+  }
+
+  @override
+  void queryProgramStatus() {
+    if (onStatus == null) return;
+    onOutput?.call(ProgramStatusReport.queryReply);
   }
 
   @override
