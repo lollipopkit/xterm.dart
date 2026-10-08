@@ -85,6 +85,13 @@ void main() {
     });
   });
 
+  test('sameAs compares id by segment', () {
+    const a = ProgramStatusReport(state: ProgramState.done, id: ['a/b']);
+    const b = ProgramStatusReport(state: ProgramState.done, id: ['a', 'b']);
+    expect(a.sameAs(b), isFalse);
+    expect(b.sameAs(const ProgramStatusReport(state: ProgramState.done, id: ['a', 'b'])), isTrue);
+  });
+
   group('TerminalProgress.parse', () {
     test('maps OSC 9;4 states', () {
       expect(TerminalProgress.parse(['4', '0'])!.state, isNull);

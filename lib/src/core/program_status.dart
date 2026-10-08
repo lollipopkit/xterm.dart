@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'package:collection/collection.dart';
+
 import 'package:xterm/src/base/observable.dart';
 
 /// What a program reports about itself, from the most to the least urgent.
@@ -124,7 +126,7 @@ final class ProgramStatusReport extends TerminalStatusEvent {
       app == other.app &&
       title == other.title &&
       msg == other.msg &&
-      id.join('/') == other.id.join('/');
+      const ListEquality<String>().equals(id, other.id);
 
   /// Whether [args] (after `7501`) is the support query, `OSC 7501 ; ? ST`.
   static bool isQuery(List<String> args) => args.length == 1 && args[0] == '?';
