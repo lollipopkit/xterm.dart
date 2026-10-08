@@ -75,6 +75,9 @@ void main() {
       expect(parse('state=done:title=${b64('a' * 193)}'), isNull);
       expect(parse('state=done:app=${'a' * 33}'), isNull);
       expect(parse('state=done:x=${'a' * 4100}'), isNull);
+      // 1400 three-byte characters: under 4096 UTF-16 units, over in bytes.
+      expect(parse('state=done:x=${'界' * 1400}'), isNull);
+      expect(parse('state=done:x=${'界' * 1000}'), isNotNull);
     });
 
     test('a report is one argument', () {
@@ -203,8 +206,22 @@ void main() {
       records
         ..apply(report('state=clear'))
         ..apply(const ShellMark(ShellMarkKind.promptStart))
+        ..apply(report('state=done'))
+        ..apply(report('state=done'))
+        ..apply(const TerminalProgress(TerminalProgressState.normal, 5))
+        ..apply(const TerminalProgress(TerminalProgressState.normal, 5))
+        ..apply(const ShellMark(ShellMarkKind.commandExecuted))
+        ..apply(const ShellMark(ShellMarkKind.commandExecuted))
+        ..apply(const ShellMark(ShellMarkKind.commandFinished, exitCode: 1))
+        ..apply(const ShellMark(ShellMarkKind.commandFinished, exitCode: 1));
+      expect(count, 4);
+
+      // The same report from another record first is a change of order.
+      records
+        ..apply(report('state=done:id=a'))
         ..apply(report('state=done'));
-      expect(count, 1);
+      expect(records.records.map((r) => r.key), ['a', '']);
+      expect(count, 6);
     });
   });
 

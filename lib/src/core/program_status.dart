@@ -116,6 +116,16 @@ final class ProgramStatusReport extends TerminalStatusEvent {
 
   bool get isClear => state == null;
 
+  /// Whether [other] says exactly what this does.
+  bool sameAs(ProgramStatusReport other) =>
+      state == other.state &&
+      kind == other.kind &&
+      progress == other.progress &&
+      app == other.app &&
+      title == other.title &&
+      msg == other.msg &&
+      id.join('/') == other.id.join('/');
+
   /// Whether [args] (after `7501`) is the support query, `OSC 7501 ; ? ST`.
   static bool isQuery(List<String> args) => args.length == 1 && args[0] == '?';
 
@@ -125,7 +135,12 @@ final class ProgramStatusReport extends TerminalStatusEvent {
     // `;` is not in the value alphabet, so a report is exactly one argument.
     if (args.length != 1) return null;
     final payload = args[0];
-    if (payload.length + _framingBytes > maxSequenceBytes) return null;
+    // Bytes, not UTF-16 units: a malformed pair is skipped rather than
+    // refused, so the payload can carry text outside the value alphabet.
+    if (payload.length + _framingBytes > maxSequenceBytes ||
+        utf8.encode(payload).length + _framingBytes > maxSequenceBytes) {
+      return null;
+    }
 
     final pairs = <String, String>{};
     for (final pair in payload.split(':')) {
@@ -471,7 +486,13 @@ class ProgramStatusRecords with Observable {
       _records.removeWhere((k, _) => k == key || k.startsWith(prefix));
       return _records.length != before;
     }
-    // Each report replaces its record whole, and makes it the most recent.
+    // Each report replaces its record whole, and makes it the most recent:
+    // nothing changes when it already is, saying the same thing.
+    if (_records.isNotEmpty &&
+        _records.keys.last == key &&
+        _records[key]!.report.sameAs(report)) {
+      return false;
+    }
     _records.remove(key);
     _records[key] = ProgramStatusRecord(report);
     while (_records.length > maxRecords) {
@@ -482,7 +503,9 @@ class ProgramStatusRecords with Observable {
 
   bool _setProgress(TerminalProgress progress) {
     final next = progress.state == null ? null : progress;
-    if (next == null && _progress == null) return false;
+    if (next?.state == _progress?.state && next?.percent == _progress?.percent) {
+      return false;
+    }
     _progress = next;
     return true;
   }
@@ -495,9 +518,16 @@ class ProgramStatusRecords with Observable {
       case ShellMarkKind.commandStart:
         return false;
       case ShellMarkKind.commandExecuted:
+        if (_command?.running ?? false) return false;
         _command = const ShellCommandStatus.running();
         return true;
       case ShellMarkKind.commandFinished:
+        final command = _command;
+        if (command != null &&
+            !command.running &&
+            command.exitCode == mark.exitCode) {
+          return false;
+        }
         _command = ShellCommandStatus.finished(mark.exitCode);
         return true;
     }
