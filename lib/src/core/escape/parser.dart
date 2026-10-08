@@ -1,6 +1,7 @@
 import 'package:xterm/src/core/color.dart';
 import 'package:xterm/src/core/mouse/mode.dart';
 import 'package:xterm/src/core/escape/handler.dart';
+import 'package:xterm/src/core/program_status.dart';
 import 'package:xterm/src/utils/ascii.dart';
 import 'package:xterm/src/utils/byte_consumer.dart';
 import 'package:xterm/src/utils/char_code.dart';
@@ -1438,6 +1439,21 @@ class EscapeParser {
         case '2':
           handler.setTitle(pt);
           return true;
+      }
+
+      final args = _osc.sublist(1);
+      if (ps == ProgramStatusReport.oscCode) {
+        if (ProgramStatusReport.isQuery(args)) {
+          handler.queryProgramStatus();
+        } else if (ProgramStatusReport.parse(args) case final report?) {
+          handler.terminalStatus(report);
+        }
+        // A refused report is dropped whole, as the spec requires.
+        return true;
+      }
+      if (TerminalStatusEvent.fromOsc(ps, args) case final event?) {
+        handler.terminalStatus(event);
+        return true;
       }
     }
 

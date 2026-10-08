@@ -1,4 +1,5 @@
 import 'package:xterm/src/core/mouse/mode.dart';
+import 'package:xterm/src/core/program_status.dart';
 
 abstract class EscapeHandler {
   void writeChar(int char);
@@ -320,6 +321,13 @@ abstract class EscapeHandler {
   void setTitle(String name);
 
   void setIconName(String name);
+
+  /// A program status report, progress bar or shell integration mark
+  /// (OSC 7501, OSC 9;4, OSC 133).
+  void terminalStatus(TerminalStatusEvent event);
+
+  /// `OSC 7501 ; ? ST`: whether the terminal reads program status reports.
+  void queryProgramStatus();
 
   void unknownOSC(String code, List<String> args);
 }
