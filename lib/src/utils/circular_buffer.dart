@@ -270,12 +270,15 @@ class IndexAwareCircularBuffer<T extends IndexedItem> {
       }
     }
 
+    // Reset before adopting: `_adoptChild` places by `_startIndex`, so with
+    // the old one a wrapped buffer put the replacement where nothing reads it
+    // and left holes in its place.
+    _startIndex = 0;
     final copyLength = replacement.length - copyStart;
     for (var i = 0; i < copyLength; i++) {
       _adoptChild(i, replacement[copyStart + i]);
     }
 
-    _startIndex = 0;
     _length = copyLength;
   }
 

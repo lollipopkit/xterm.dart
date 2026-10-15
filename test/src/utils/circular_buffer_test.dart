@@ -407,6 +407,21 @@ void main() {
       expect(items[4].index, 2);
     });
 
+    test('replaceWith after the buffer has wrapped', () {
+      // A full buffer that has been pushed to has a non-zero start. The
+      // replacement has to land where the reset start reads it, or the
+      // buffer is left with holes (SERVERBOX-O, SERVERBOX-16).
+      final cl = IndexAwareCircularBuffer<IndexedValue<int>>(4);
+      cl.pushAll(List.generate(6, (i) => IndexedValue(i)));
+
+      cl.replaceWith([10.indexed, 11.indexed, 12.indexed]);
+
+      expect(cl.length, 3);
+      expect(cl.toList(), [10.indexed, 11.indexed, 12.indexed]);
+      expect(cl[2].index, 2);
+      expect(cl.pop(), 12.indexed);
+    });
+
     test('can track index of items', () {
       final cl = IndexAwareCircularBuffer<IndexedValue<int>>(3);
       final item0 = IndexedValue(0);
