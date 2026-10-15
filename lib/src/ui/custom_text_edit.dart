@@ -510,35 +510,40 @@ class CustomTextEditState extends State<CustomTextEdit>
     _showCaretOnScreen();
   }
 
+  /// What a finished (not composing) update typed.
+  ///
+  /// Nothing in the buffer past the placeholder has reached the terminal: a
+  /// composition is only previewed, and the buffer is reset to the placeholder
+  /// after every commit. So whatever the IME left of the placeholder is all
+  /// that is not input, wherever it wrote — after it, over it, in place of a
+  /// composition, longer or shorter than what it replaced. Not an offset into
+  /// the previous text, which assumed the IME only ever appends.
+  String _typed(String currentText) {
+    final initialText = _initEditingState.text;
+    var kept = 0;
+    while (kept < initialText.length &&
+        kept < currentText.length &&
+        currentText.codeUnitAt(kept) == initialText.codeUnitAt(kept)) {
+      kept++;
+    }
+    return currentText.substring(kept);
+  }
+
   bool _processDeleteDetectionInput(
     String previousText,
     String currentText,
     int initTextLength,
   ) {
-    final String initialText = _initEditingState.text;
-    if (currentText.length < previousText.length &&
-        previousText == initialText &&
-        currentText.startsWith(initialText.substring(0, initTextLength - 1))) {
-      if (!_consumeImeDeleteSuppression()) {
-        widget.onDelete();
-        return true;
-      }
-    } else if (currentText.length > initTextLength &&
-        currentText.startsWith(initialText)) {
-      return _insertTextDelta(currentText.substring(initTextLength));
-    } else if (currentText.length > previousText.length &&
-        previousText == initialText) {
-      // Written over the placeholder rather than after it. The buffer is reset
-      // after every commit, so the placeholder is all there was to replace,
-      // and it is not terminal text: everything past what is left of it is
-      // input, not just what is past its length.
-      var kept = 0;
-      while (kept < initTextLength &&
-          kept < currentText.length &&
-          currentText.codeUnitAt(kept) == initialText.codeUnitAt(kept)) {
-        kept++;
-      }
-      return _insertTextDelta(currentText.substring(kept));
+    final typed = _typed(currentText);
+    if (typed.isNotEmpty) {
+      return _insertTextDelta(typed);
+    }
+    // Only placeholder left, and less of it: a backspace.
+    if (currentText.length < initTextLength &&
+        previousText == _initEditingState.text &&
+        !_consumeImeDeleteSuppression()) {
+      widget.onDelete();
+      return true;
     }
     return false;
   }
@@ -549,17 +554,17 @@ class CustomTextEditState extends State<CustomTextEdit>
     int initTextLength,
     bool wasComposing,
   ) {
-    if (wasComposing) {
-      // The committed text replaces the composing text entirely.
-      return _insertTextDelta(currentText.substring(initTextLength));
+    final typed = _typed(currentText);
+    if (typed.isNotEmpty) {
+      return _insertTextDelta(typed);
     }
-    if (currentText.length < previousText.length) {
-      if (!_consumeImeDeleteSuppression()) {
-        widget.onDelete();
-        return true;
-      }
-    } else if (currentText.length > previousText.length) {
-      return _insertTextDelta(currentText.substring(previousText.length));
+    // A composition given up leaves less text than it had, which is not a
+    // delete: none of it was sent.
+    if (!wasComposing &&
+        currentText.length < previousText.length &&
+        !_consumeImeDeleteSuppression()) {
+      widget.onDelete();
+      return true;
     }
     return false;
   }
@@ -911,8 +916,11 @@ class CustomTextEditState extends State<CustomTextEdit>
     // The clipboard can refuse — on Windows another program may hold it open —
     // and nothing awaits this to hear about it (SERVERBOX-1N7). Not copied is
     // the outcome either way, so it is not reported as copied.
+    // Nor is a copy that lands after this edit is gone anyone's to report.
     Clipboard.setData(ClipboardData(text: selectedText)).then(
-      (_) => widget.onCopied?.call(),
+      (_) {
+        if (mounted) widget.onCopied?.call();
+      },
       onError: (Object _) {},
     );
 
@@ -1206,6 +1214,12 @@ class CustomTextEditState extends State<CustomTextEdit>
     final base = data['selectionBase'];
     final extent = data['selectionExtent'];
     if (base is int && extent is int) {
+      // Platform data, checked before it becomes the editing value: a range
+      // outside the text would break the next edit that reads it.
+      final length = _currentEditingState.text.length;
+      if (base < 0 || extent < 0 || base > length || extent > length) {
+        return true;
+      }
       final affinityIndex = data['selectionAffinity'];
       TextAffinity? affinity;
       if (affinityIndex is int &&

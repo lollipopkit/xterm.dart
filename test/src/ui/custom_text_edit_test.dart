@@ -10,6 +10,7 @@ void main() {
   _richContentAndClipboard();
   _pasteFailures();
   _imeReplacesPlaceholder();
+  _imeEdits();
 
   testWidgets('IME delete command emits a single backspace', (tester) async {
     final focusNode = FocusNode();
@@ -371,5 +372,149 @@ void _imeReplacesPlaceholder() {
     );
 
     expect(inserted, ['hello', 'ls']);
+  });
+}
+
+Future<CustomTextEditState> _pumpDetecting(
+  WidgetTester tester, {
+  required List<String> inserted,
+  required void Function() onDelete,
+  bool deleteDetection = true,
+}) async {
+  final focusNode = FocusNode();
+  addTearDown(focusNode.dispose);
+  await tester.pumpWidget(
+    MaterialApp(
+      home: Material(
+        child: CustomTextEdit(
+          focusNode: focusNode,
+          deleteDetection: deleteDetection,
+          onInsert: inserted.add,
+          onDelete: onDelete,
+          onComposing: (_) {},
+          onAction: (_) {},
+          onKeyEvent: (_, _) => KeyEventResult.ignored,
+          child: const SizedBox.shrink(),
+        ),
+      ),
+    ),
+  );
+  focusNode.requestFocus();
+  await tester.pump();
+  return tester.state<CustomTextEditState>(find.byType(CustomTextEdit));
+}
+
+void _imeEdits() {
+  testWidgets('a shorter commit over the placeholder is still input', (
+    tester,
+  ) async {
+    final inserted = <String>[];
+    var deletes = 0;
+    final state = await _pumpDetecting(
+      tester,
+      inserted: inserted,
+      onDelete: () => deletes++,
+    );
+
+    state.updateEditingValue(
+      const TextEditingValue(
+        text: 'a',
+        selection: TextSelection.collapsed(offset: 1),
+      ),
+    );
+    expect(inserted, ['a']);
+    expect(deletes, 0);
+
+    // One placeholder space gone and nothing written: a backspace.
+    state.updateEditingValue(
+      const TextEditingValue(
+        text: ' ',
+        selection: TextSelection.collapsed(offset: 1),
+      ),
+    );
+    expect(deletes, 1);
+    expect(inserted, ['a']);
+  });
+
+  testWidgets('a composition committed as different text inserts the commit', (
+    tester,
+  ) async {
+    // Pinyin composed, then committed as the characters it spelled: nothing
+    // of the composition reached the terminal, so the commit is all of it.
+    final inserted = <String>[];
+    final state = await _pumpDetecting(
+      tester,
+      inserted: inserted,
+      onDelete: () {},
+      deleteDetection: false,
+    );
+
+    state.updateEditingValue(
+      const TextEditingValue(
+        text: 'nihao',
+        selection: TextSelection.collapsed(offset: 5),
+        composing: TextRange(start: 0, end: 5),
+      ),
+    );
+    state.updateEditingValue(
+      const TextEditingValue(
+        text: '你好',
+        selection: TextSelection.collapsed(offset: 2),
+      ),
+    );
+
+    expect(inserted, ['你好']);
+  });
+
+  testWidgets('a copy that lands after the edit is gone is not reported', (
+    tester,
+  ) async {
+    final written = Completer<Object?>();
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) =>
+          call.method == 'Clipboard.setData' ? written.future : Future.value(),
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      ),
+    );
+    var copied = false;
+    final state = await _pumpEdit(
+      tester,
+      onInsert: (_) {},
+      onCopied: () => copied = true,
+      getSelectedText: () => 'secret',
+      hasSelection: () => true,
+    );
+
+    state.copySelection(SelectionChangedCause.keyboard);
+    await tester.pumpWidget(const SizedBox.shrink());
+    written.complete(null);
+    await tester.pump();
+
+    expect(copied, isFalse);
+  });
+
+  testWidgets('a private-command selection outside the text is ignored', (
+    tester,
+  ) async {
+    final inserted = <String>[];
+    final state = await _pumpDetecting(
+      tester,
+      inserted: inserted,
+      onDelete: () {},
+    );
+    final before = state.textEditingValue.selection;
+
+    state.performPrivateCommand('setSelection', {
+      'selectionBase': 999,
+      'selectionExtent': 1000,
+    });
+
+    expect(state.textEditingValue.selection, before);
+    expect(inserted, isEmpty);
   });
 }
