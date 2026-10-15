@@ -2,6 +2,9 @@ import 'package:test/test.dart';
 import 'package:xterm/xterm.dart';
 
 void main() {
+  _anchorFromStaleOffset();
+  _scrollKeepsLinesAttached();
+
   group('Buffer.getText()', () {
     test('should return the text', () {
       final terminal = Terminal();
@@ -274,5 +277,86 @@ void main() {
       expect(terminal.buffer.lines[1].toString(), '4');
       expect(terminal.buffer.lines[2].toString(), '');
     });
+  });
+}
+
+/// Every line in the buffer is attached and knows where it is. Moving a line
+/// by assigning it to another slot left it in both until the second slot was
+/// overwritten, which detached it from the first too (SERVERBOX-28).
+void _expectLinesIndexed(Terminal terminal) {
+  final lines = terminal.buffer.lines;
+  for (var i = 0; i < lines.length; i++) {
+    expect(lines[i].attached, isTrue, reason: 'line $i detached');
+    expect(lines[i].index, i, reason: 'line $i misplaced');
+  }
+}
+
+void _scrollKeepsLinesAttached() {
+  group('moving lines keeps them attached', () {
+    Terminal setUp() {
+      final terminal = Terminal(maxLines: 50);
+      terminal.resize(10, 10);
+      for (var i = 0; i < 9; i++) {
+        terminal.write('line $i\r\n');
+      }
+      terminal.setMargins(0, 7);
+      return terminal;
+    }
+
+    test('scrollUp', () {
+      final terminal = setUp();
+      terminal.buffer.scrollUp(2);
+      _expectLinesIndexed(terminal);
+    });
+
+    test('scrollDown', () {
+      final terminal = setUp();
+      terminal.buffer.scrollDown(2);
+      _expectLinesIndexed(terminal);
+    });
+
+    test('deleteLines', () {
+      final terminal = setUp();
+      terminal.setCursor(0, 2);
+      terminal.buffer.deleteLines(2);
+      _expectLinesIndexed(terminal);
+    });
+
+    test('a line feed at the bottom margin after a scroll', () {
+      // The reported crash: a scrolled region, then an index at its bottom
+      // inserts into the buffer and moves the lines the scroll detached.
+      // The region then shrinks (a split, a status line), so the lines the
+      // scroll moved sit below its new bottom, where the insert moves them.
+      final terminal = setUp();
+      terminal.buffer.scrollDown(2);
+      terminal.setMargins(0, 4);
+      terminal.setCursor(0, 4);
+      terminal.buffer.lineFeed();
+      _expectLinesIndexed(terminal);
+    });
+
+    test('more lines than the region holds', () {
+      final terminal = setUp();
+      terminal.buffer.scrollUp(20);
+      terminal.buffer.scrollDown(20);
+      _expectLinesIndexed(terminal);
+      expect(terminal.buffer.lines[0].toString(), isEmpty);
+    });
+  });
+}
+
+void _anchorFromStaleOffset() {
+  test('an anchor from an offset past the buffer lands on its last cell', () {
+    // A selection's offsets outlive the rows they were taken on.
+    final terminal = Terminal();
+    terminal.resize(10, 5);
+    final lines = terminal.buffer.lines;
+
+    final anchor = terminal.buffer.createAnchorFromOffset(
+      CellOffset(40, lines.length + 20),
+    );
+
+    expect(anchor.y, lines.length - 1);
+    expect(anchor.x, lines[lines.length - 1].length);
   });
 }

@@ -407,6 +407,54 @@ void main() {
       expect(items[4].index, 2);
     });
 
+    test('replaceWith after the buffer has wrapped', () {
+      // A full buffer that has been pushed to has a non-zero start. The
+      // replacement has to land where the reset start reads it, or the
+      // buffer is left with holes (SERVERBOX-O, SERVERBOX-16).
+      final cl = IndexAwareCircularBuffer<IndexedValue<int>>(4);
+      cl.pushAll(List.generate(6, (i) => IndexedValue(i)));
+
+      cl.replaceWith([10.indexed, 11.indexed, 12.indexed]);
+
+      expect(cl.length, 3);
+      expect(cl.toList(), [10.indexed, 11.indexed, 12.indexed]);
+      expect(cl[2].index, 2);
+      expect(cl.pop(), 12.indexed);
+    });
+
+    test('refuses an item that is stored elsewhere, changing nothing', () {
+      // Readable from two slots with an index naming one: the shape of the
+      // scroll bug behind SERVERBOX-28. Refused in release builds too, and
+      // before anything moves.
+      final a = IndexAwareCircularBuffer<IndexedValue<int>>(4);
+      final b = IndexAwareCircularBuffer<IndexedValue<int>>(4);
+      final x = IndexedValue(1);
+      final y = IndexedValue(2);
+      a.pushAll([x, y]);
+      final z = IndexedValue(9);
+      b.push(z);
+
+      expect(() => a[1] = x, throwsStateError);
+      expect(() => a.insert(0, y), throwsStateError);
+      expect(() => b.push(x), throwsStateError);
+      expect(() => b.replaceWith([x]), throwsStateError);
+      expect(() => b.replaceWith([z, z]), throwsStateError);
+
+      expect(a.toList(), [x, y]);
+      expect([x.index, y.index], [0, 1]);
+      expect(b.toList(), [z]);
+      expect(z.index, 0);
+
+      // Re-storing an item in its own slot, moving one with swap, and
+      // replacing a buffer with its own items stay allowed.
+      a[0] = x;
+      a[1] = a.swap(0, IndexedValue(3));
+      expect(a[1], same(x));
+      expect(x.index, 1);
+      a.replaceWith([x, a[0]]);
+      expect(a[0], same(x));
+    });
+
     test('can track index of items', () {
       final cl = IndexAwareCircularBuffer<IndexedValue<int>>(3);
       final item0 = IndexedValue(0);

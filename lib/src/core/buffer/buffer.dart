@@ -368,11 +368,18 @@ class Buffer {
     currentLine.eraseRange(start, start + count, terminal.cursor);
   }
 
+  // Lines are moved with `swap`, as [insertLines] does, never by assigning one
+  // slot's line to another: that leaves the line in both until the first slot
+  // is overwritten, which detaches it from the second as well, and a detached
+  // line in the buffer breaks the next insert or remove that moves it
+  // (SERVERBOX-28). The empty line swapped in is the one the slot ends with,
+  // so only a slot nothing was moved out of needs a new one.
+
   void scrollDown(int lines) {
     for (var i = absoluteMarginBottom; i >= absoluteMarginTop; i--) {
       if (i >= absoluteMarginTop + lines) {
-        this.lines[i] = this.lines[i - lines];
-      } else {
+        this.lines[i] = this.lines.swap(i - lines, _newEmptyLine());
+      } else if (i > absoluteMarginBottom - lines) {
         this.lines[i] = _newEmptyLine();
       }
     }
@@ -381,8 +388,8 @@ class Buffer {
   void scrollUp(int lines) {
     for (var i = absoluteMarginTop; i <= absoluteMarginBottom; i++) {
       if (i <= absoluteMarginBottom - lines) {
-        this.lines[i] = this.lines[i + lines];
-      } else {
+        this.lines[i] = this.lines.swap(i + lines, _newEmptyLine());
+      } else if (i < absoluteMarginTop + lines) {
         this.lines[i] = _newEmptyLine();
       }
     }
@@ -656,13 +663,16 @@ class Buffer {
 
     final linesToMove = absoluteMarginBottom - absoluteCursorY + 1 - count;
 
+    // `swap`, for the reason given above [scrollDown].
     for (var i = 0; i < linesToMove; i++) {
       final index = absoluteCursorY + i;
-      lines[index] = lines[index + count];
+      lines[index] = lines.swap(index + count, _newEmptyLine());
     }
 
+    // Slots a line was moved out of already hold the empty line swapped in.
     for (var i = 0; i < count; i++) {
-      lines[absoluteMarginBottom - i] = _newEmptyLine();
+      final index = absoluteMarginBottom - i;
+      if (index - count < absoluteCursorY) lines[index] = _newEmptyLine();
     }
   }
 
@@ -719,8 +729,14 @@ class Buffer {
   }
 
   /// Create a new [CellAnchor] at the specified [x] and [y] coordinates.
+  ///
+  /// Clamped to the nearest cell that exists. A selection holds offsets across
+  /// frames, and the buffer can lose rows under it — a clear, a switch to the
+  /// alternate screen, a reflow — so an offset taken a moment ago may point
+  /// past the end by the time it is anchored (SERVERBOX-20P, SERVERBOX-R).
   CellAnchor createAnchorFromOffset(CellOffset offset) {
-    return lines[offset.y].createAnchor(offset.x);
+    final line = lines[offset.y.clamp(0, lines.length - 1)];
+    return line.createAnchor(offset.x.clamp(0, line.length));
   }
 
   CellAnchor createAnchorFromCursor() {

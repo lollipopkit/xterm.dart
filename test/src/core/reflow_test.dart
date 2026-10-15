@@ -2,6 +2,8 @@ import 'package:test/test.dart';
 import 'package:xterm/src/terminal.dart';
 
 void main() {
+  _resizeAfterScrollbackIsFull();
+
   test('reflow() can reflow a single line', () {
     final terminal = Terminal();
 
@@ -124,5 +126,30 @@ void main() {
     for (var i = 0; i < 10; i++) {
       expect(terminal.buffer.lines[i].length, 13);
     }
+  });
+}
+
+/// Scrollback full means the line buffer has wrapped; a width change then
+/// reflowed into the wrong slots, and the next resize read a hole
+/// (SERVERBOX-O in reflow, SERVERBOX-16 in pop).
+void _resizeAfterScrollbackIsFull() {
+  test('resize after the scrollback is full', () {
+    final terminal = Terminal(maxLines: 20);
+    terminal.resize(10, 5);
+    // Each wraps at 10 columns, so widening merges them and the reflow comes
+    // back shorter than the buffer it replaces.
+    for (var i = 0; i < 100; i++) {
+      terminal.write('line $i abcdefghij\r\n');
+    }
+
+    terminal.resize(30, 5);
+    terminal.resize(12, 5);
+    terminal.resize(12, 3);
+
+    final lines = terminal.buffer.lines;
+    for (var i = 0; i < lines.length; i++) {
+      expect(lines[i].index, i);
+    }
+    expect(lines.toList().map((l) => l.toString()), contains('line 99 abcd'));
   });
 }
