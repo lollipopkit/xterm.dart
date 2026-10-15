@@ -9,6 +9,7 @@ import 'package:xterm/src/ui/custom_text_edit.dart';
 void main() {
   _richContentAndClipboard();
   _pasteFailures();
+  _imeReplacesPlaceholder();
 
   testWidgets('IME delete command emits a single backspace', (tester) async {
     final focusNode = FocusNode();
@@ -322,4 +323,53 @@ void _pasteFailures() {
     expect(tester.takeException(), isNull);
     // Without the guard this waits on a setState that never comes back.
   }, timeout: const Timeout(Duration(seconds: 10)));
+}
+
+void _imeReplacesPlaceholder() {
+  testWidgets('an IME replacing the placeholder inserts all it wrote', (
+    tester,
+  ) async {
+    // With delete detection the buffer is two placeholder spaces, reset after
+    // every commit. An IME that writes over them rather than after them must
+    // not lose what stood where they were.
+    final inserted = <String>[];
+    final focusNode = FocusNode();
+    addTearDown(focusNode.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Material(
+          child: CustomTextEdit(
+            focusNode: focusNode,
+            deleteDetection: true,
+            onInsert: inserted.add,
+            onDelete: () {},
+            onComposing: (_) {},
+            onAction: (_) {},
+            onKeyEvent: (_, _) => KeyEventResult.ignored,
+            child: const SizedBox.shrink(),
+          ),
+        ),
+      ),
+    );
+    focusNode.requestFocus();
+    await tester.pump();
+    final state = tester.state<CustomTextEditState>(
+      find.byType(CustomTextEdit),
+    );
+
+    state.updateEditingValue(
+      const TextEditingValue(
+        text: 'hello',
+        selection: TextSelection.collapsed(offset: 5),
+      ),
+    );
+    state.updateEditingValue(
+      const TextEditingValue(
+        text: '  ls',
+        selection: TextSelection.collapsed(offset: 4),
+      ),
+    );
+
+    expect(inserted, ['hello', 'ls']);
+  });
 }

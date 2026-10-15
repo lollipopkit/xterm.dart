@@ -528,7 +528,17 @@ class CustomTextEditState extends State<CustomTextEdit>
       return _insertTextDelta(currentText.substring(initTextLength));
     } else if (currentText.length > previousText.length &&
         previousText == initialText) {
-      return _insertTextDelta(currentText.substring(initTextLength));
+      // Written over the placeholder rather than after it. The buffer is reset
+      // after every commit, so the placeholder is all there was to replace,
+      // and it is not terminal text: everything past what is left of it is
+      // input, not just what is past its length.
+      var kept = 0;
+      while (kept < initTextLength &&
+          kept < currentText.length &&
+          currentText.codeUnitAt(kept) == initialText.codeUnitAt(kept)) {
+        kept++;
+      }
+      return _insertTextDelta(currentText.substring(kept));
     }
     return false;
   }
