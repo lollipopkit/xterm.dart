@@ -422,6 +422,26 @@ void main() {
       expect(cl.pop(), 12.indexed);
     });
 
+    test('refuses an item that is stored elsewhere', () {
+      // Readable from two slots with an index naming one: the shape of the
+      // scroll bug behind SERVERBOX-28.
+      final a = IndexAwareCircularBuffer<IndexedValue<int>>(4);
+      final b = IndexAwareCircularBuffer<IndexedValue<int>>(4);
+      final x = IndexedValue(1);
+      a.pushAll([x, IndexedValue(2)]);
+
+      expect(() => a[1] = x, throwsA(isA<AssertionError>()));
+      expect(() => b.replaceWith([x]), throwsA(isA<AssertionError>()));
+      expect(() => b.push(x), throwsA(isA<AssertionError>()));
+
+      // Re-storing an item in its own slot, and moving one with swap, stay
+      // allowed.
+      a[0] = x;
+      a[1] = a.swap(0, IndexedValue(3));
+      expect(a[1], same(x));
+      expect(x.index, 1);
+    });
+
     test('can track index of items', () {
       final cl = IndexAwareCircularBuffer<IndexedValue<int>>(3);
       final item0 = IndexedValue(0);

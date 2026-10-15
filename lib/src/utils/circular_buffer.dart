@@ -38,6 +38,15 @@ class IndexAwareCircularBuffer<T extends IndexedItem> {
   @pragma('vm:prefer-inline')
   void _adoptChild(int index, T child) {
     final cyclicIndex = _getCyclicIndex(index);
+    // An item stored elsewhere would be readable from both slots while its
+    // index named only this one, and the next write to the other slot would
+    // detach it here too (SERVERBOX-28). Move an item with [swap], which
+    // takes it out of its slot first; clearing the old slot here instead
+    // would leave a hole, which is worse.
+    assert(
+      !child.attached || identical(_array[cyclicIndex], child),
+      'Item is already stored in a buffer; move it with swap',
+    );
     _array[cyclicIndex]?._detach();
     _array[cyclicIndex] = child.._attach(this, index);
   }
