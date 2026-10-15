@@ -1,3 +1,5 @@
+import 'dart:collection';
+
 /// A circular buffer in which elements know their index in the buffer.
 class IndexAwareCircularBuffer<T extends IndexedItem> {
   /// Creates a new circular list with the specified [maxLength].
@@ -38,17 +40,23 @@ class IndexAwareCircularBuffer<T extends IndexedItem> {
   @pragma('vm:prefer-inline')
   void _adoptChild(int index, T child) {
     final cyclicIndex = _getCyclicIndex(index);
-    // An item stored elsewhere would be readable from both slots while its
-    // index named only this one, and the next write to the other slot would
-    // detach it here too (SERVERBOX-28). Move an item with [swap], which
-    // takes it out of its slot first; clearing the old slot here instead
-    // would leave a hole, which is worse.
-    assert(
-      !child.attached || identical(_array[cyclicIndex], child),
-      'Item is already stored in a buffer; move it with swap',
-    );
+    if (!identical(_array[cyclicIndex], child)) _checkNotStored(child);
     _array[cyclicIndex]?._detach();
     _array[cyclicIndex] = child.._attach(this, index);
+  }
+
+  /// Refuses an [item] stored elsewhere, before anything has been changed.
+  ///
+  /// Stored twice, it would be readable from both slots while its index named
+  /// one, and the next write to either would detach it from the other as well
+  /// (SERVERBOX-28). A check rather than an assert: release builds are the ones
+  /// that would corrupt. Move an item with [swap], which takes it out of its
+  /// slot first; clearing the old slot here would leave a hole, which is worse.
+  @pragma('vm:prefer-inline')
+  void _checkNotStored(T item) {
+    if (item._owner != null) {
+      throw StateError('Item is already stored in a buffer; move it with swap');
+    }
   }
 
   /// Moves the element at [fromIndex] to [toIndex]. Both indexes should be
@@ -201,6 +209,8 @@ class IndexAwareCircularBuffer<T extends IndexedItem> {
   /// right. May cause the first element to be trimmed if the list is full.
   void insert(int index, T item) {
     RangeError.checkValueInInterval(index, 0, _length, 'index');
+    // Here, not at the adopt: by then everything after [index] has moved.
+    _checkNotStored(item);
 
     if (index == _length) {
       return push(item);
@@ -264,6 +274,18 @@ class IndexAwareCircularBuffer<T extends IndexedItem> {
 
   /// Replaces all elements in the list with [replacement].
   void replaceWith(List<T> replacement) {
+    // All of it checked before any of it is dropped, so a bad replacement
+    // leaves the buffer as it was. Items of this buffer are fine: the drop
+    // below lets go of them first.
+    final seen = HashSet<T>.identity();
+    for (final item in replacement) {
+      if (!seen.add(item) || (item.attached && !identical(item._owner, this))) {
+        throw StateError(
+          'Replacement holds an item twice or one stored in another buffer',
+        );
+      }
+    }
+
     for (var i = 0; i < _length; i++) {
       _dropChild(i);
     }
@@ -271,12 +293,6 @@ class IndexAwareCircularBuffer<T extends IndexedItem> {
     var copyStart = 0;
     if (replacement.length > maxLength) {
       copyStart = replacement.length - maxLength;
-    }
-
-    for (var i = 0; i < copyStart; i++) {
-      if (replacement[i].attached) {
-        replacement[i]._detach();
-      }
     }
 
     // Reset before adopting: `_adoptChild` places by `_startIndex`, so with

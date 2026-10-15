@@ -422,24 +422,37 @@ void main() {
       expect(cl.pop(), 12.indexed);
     });
 
-    test('refuses an item that is stored elsewhere', () {
+    test('refuses an item that is stored elsewhere, changing nothing', () {
       // Readable from two slots with an index naming one: the shape of the
-      // scroll bug behind SERVERBOX-28.
+      // scroll bug behind SERVERBOX-28. Refused in release builds too, and
+      // before anything moves.
       final a = IndexAwareCircularBuffer<IndexedValue<int>>(4);
       final b = IndexAwareCircularBuffer<IndexedValue<int>>(4);
       final x = IndexedValue(1);
-      a.pushAll([x, IndexedValue(2)]);
+      final y = IndexedValue(2);
+      a.pushAll([x, y]);
+      final z = IndexedValue(9);
+      b.push(z);
 
-      expect(() => a[1] = x, throwsA(isA<AssertionError>()));
-      expect(() => b.replaceWith([x]), throwsA(isA<AssertionError>()));
-      expect(() => b.push(x), throwsA(isA<AssertionError>()));
+      expect(() => a[1] = x, throwsStateError);
+      expect(() => a.insert(0, y), throwsStateError);
+      expect(() => b.push(x), throwsStateError);
+      expect(() => b.replaceWith([x]), throwsStateError);
+      expect(() => b.replaceWith([z, z]), throwsStateError);
 
-      // Re-storing an item in its own slot, and moving one with swap, stay
-      // allowed.
+      expect(a.toList(), [x, y]);
+      expect([x.index, y.index], [0, 1]);
+      expect(b.toList(), [z]);
+      expect(z.index, 0);
+
+      // Re-storing an item in its own slot, moving one with swap, and
+      // replacing a buffer with its own items stay allowed.
       a[0] = x;
       a[1] = a.swap(0, IndexedValue(3));
       expect(a[1], same(x));
       expect(x.index, 1);
+      a.replaceWith([x, a[0]]);
+      expect(a[0], same(x));
     });
 
     test('can track index of items', () {
