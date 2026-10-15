@@ -1,8 +1,14 @@
+import 'dart:async';
+import 'dart:convert';
+
+import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:xterm/src/ui/custom_text_edit.dart';
 
 void main() {
+  _richContentAndClipboard();
+
   testWidgets('IME delete command emits a single backspace', (tester) async {
     final focusNode = FocusNode();
     var deleteCount = 0;
@@ -144,5 +150,122 @@ void main() {
     expect(insertedText, ['日本語', 'かきく']);
 
     focusNode.dispose();
+  });
+}
+
+Future<CustomTextEditState> _pumpEdit(
+  WidgetTester tester, {
+  required void Function(String) onInsert,
+  void Function()? onCopied,
+  String Function()? getSelectedText,
+  bool Function()? hasSelection,
+}) async {
+  final focusNode = FocusNode();
+  addTearDown(focusNode.dispose);
+  await tester.pumpWidget(
+    MaterialApp(
+      home: Material(
+        child: CustomTextEdit(
+          focusNode: focusNode,
+          onInsert: onInsert,
+          onDelete: () {},
+          onComposing: (_) {},
+          onAction: (_) {},
+          onKeyEvent: (_, _) => KeyEventResult.ignored,
+          onCopied: onCopied,
+          getSelectedText: getSelectedText,
+          hasSelection: hasSelection,
+          child: const SizedBox.shrink(),
+        ),
+      ),
+    ),
+  );
+  focusNode.requestFocus();
+  await tester.pump();
+  return tester.state<CustomTextEditState>(find.byType(CustomTextEdit));
+}
+
+void _richContentAndClipboard() {
+  testWidgets('inserted content that is not text is ignored', (tester) async {
+    // A sticker or GIF from the keyboard is image bytes (SERVERBOX-146).
+    final inserted = <String>[];
+    final state = await _pumpEdit(tester, onInsert: inserted.add);
+
+    state.insertContent(
+      KeyboardInsertedContent(
+        mimeType: 'image/png',
+        uri: 'content://sticker',
+        data: Uint8List.fromList([0x89, 0x50, 0x4e, 0x47, 0xff]),
+      ),
+    );
+    state.insertContent(
+      KeyboardInsertedContent(
+        mimeType: 'text/plain',
+        uri: 'content://text',
+        data: Uint8List.fromList(utf8.encode('ls -la')),
+      ),
+    );
+
+    expect(inserted, ['ls -la']);
+  });
+
+  testWidgets('a paste with no selection goes at the end', (tester) async {
+    // SERVERBOX-1AL: offsets of -1 have nothing to split at.
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async => call.method == 'Clipboard.getData'
+          ? <String, dynamic>{'text': 'pwd'}
+          : null,
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      ),
+    );
+    final state = await _pumpEdit(tester, onInsert: (_) {});
+    state.textEditingValue = const TextEditingValue(
+      text: 'ab',
+      selection: TextSelection.collapsed(offset: -1),
+    );
+
+    await state.pasteText(SelectionChangedCause.keyboard);
+
+    expect(state.textEditingValue.text, endsWith('pwd'));
+  });
+
+  testWidgets('a clipboard that refuses a copy is not reported', (
+    tester,
+  ) async {
+    // SERVERBOX-1N7: Windows answers "Unable to open clipboard".
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async => call.method == 'Clipboard.setData'
+          ? throw PlatformException(code: 'Clipboard error')
+          : null,
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      ),
+    );
+    var copied = false;
+    final state = await _pumpEdit(
+      tester,
+      onInsert: (_) {},
+      onCopied: () => copied = true,
+      getSelectedText: () => 'secret',
+      hasSelection: () => true,
+    );
+
+    final errors = <Object>[];
+    await runZonedGuarded(() async {
+      state.copySelection(SelectionChangedCause.keyboard);
+      await tester.pump();
+    }, (e, _) => errors.add(e));
+
+    expect(errors, isEmpty);
+    expect(copied, isFalse);
   });
 }

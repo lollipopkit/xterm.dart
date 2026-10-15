@@ -758,7 +758,9 @@ class TerminalViewState extends State<TerminalView>
 
   void _scrollToBottom() {
     final position = _scrollableKey.currentState?.position;
-    if (position != null) {
+    // A position not yet laid out has no extent: `maxScrollExtent` asserts one
+    // with `!`, and a key typed in that frame threw (SERVERBOX-14B).
+    if (position != null && position.hasContentDimensions) {
       position.animateTo(
         position.maxScrollExtent,
         duration: const Duration(milliseconds: 377),

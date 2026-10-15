@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:xterm/src/ui/shortcut/shortcuts.dart';
 
@@ -282,17 +283,25 @@ class CustomTextEditState extends State<CustomTextEdit>
 
   void _showCaretOnScreen() {
     if (_caretRect == Rect.zero) return;
-    final renderBox = context.findRenderObject() as RenderBox?;
-    if (renderBox == null || !renderBox.hasSize) return;
-    final scrollableState = Scrollable.maybeOf(context);
-    if (scrollableState == null) return;
-    scrollableState.position.ensureVisible(
-      renderBox,
-      alignment: 0.5,
-      duration: const Duration(milliseconds: 150),
-      curve: Curves.ease,
-      alignmentPolicy: ScrollPositionAlignmentPolicy.explicit,
-    );
+    // After the frame, not now: the input method can call in mid-layout, and
+    // `ensureVisible` walks up through ancestors that may not be laid out yet
+    // — a list item the host is still building threw (SERVERBOX-11T).
+    SchedulerBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final renderBox = context.findRenderObject() as RenderBox?;
+      if (renderBox == null || !renderBox.attached || !renderBox.hasSize) {
+        return;
+      }
+      final scrollableState = Scrollable.maybeOf(context);
+      if (scrollableState == null) return;
+      scrollableState.position.ensureVisible(
+        renderBox,
+        alignment: 0.5,
+        duration: const Duration(milliseconds: 150),
+        curve: Curves.ease,
+        alignmentPolicy: ScrollPositionAlignmentPolicy.explicit,
+      );
+    });
   }
 
   @override
@@ -560,11 +569,12 @@ class CustomTextEditState extends State<CustomTextEdit>
 
   @override
   void insertContent(KeyboardInsertedContent content) {
-    // Handle rich content insertion if needed
-    // For a terminal, this might involve converting to text or specific escape codes
-    if (content.data != null) {
-      widget.onInsert(utf8.decode(content.data!));
-    }
+    // Text only. A keyboard inserts stickers and GIFs this way too, whose
+    // bytes are an image a terminal cannot show and not UTF-8 at all: decoding
+    // them threw (SERVERBOX-146).
+    final data = content.data;
+    if (data == null || !content.mimeType.startsWith('text/')) return;
+    widget.onInsert(utf8.decode(data, allowMalformed: true));
   }
 
   @override
@@ -888,9 +898,13 @@ class CustomTextEditState extends State<CustomTextEdit>
       return;
     }
 
-    Clipboard.setData(ClipboardData(text: selectedText)).then((_) {
-      widget.onCopied?.call();
-    });
+    // The clipboard can refuse — on Windows another program may hold it open —
+    // and nothing awaits this to hear about it (SERVERBOX-1N7). Not copied is
+    // the outcome either way, so it is not reported as copied.
+    Clipboard.setData(ClipboardData(text: selectedText)).then(
+      (_) => widget.onCopied?.call(),
+      onError: (Object _) {},
+    );
 
     if (cause == SelectionChangedCause.toolbar) {
       hideToolbar();
@@ -915,8 +929,12 @@ class CustomTextEditState extends State<CustomTextEdit>
     if (data == null || data.text == null) {
       return;
     }
-    final selection = _currentEditingState.selection;
     final text = _currentEditingState.text;
+    // An editing value with no selection (offsets of -1) has no before or
+    // after to split at; the paste goes at the end (SERVERBOX-1AL).
+    final selection = _currentEditingState.selection.isValid
+        ? _currentEditingState.selection
+        : TextSelection.collapsed(offset: text.length);
     final newText =
         selection.textBefore(text) + data.text! + selection.textAfter(text);
     textEditingValue = TextEditingValue(
