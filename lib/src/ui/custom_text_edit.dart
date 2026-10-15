@@ -925,8 +925,16 @@ class CustomTextEditState extends State<CustomTextEdit>
       return;
     }
     
-    final ClipboardData? data = await Clipboard.getData(Clipboard.kTextPlain);
-    if (data == null || data.text == null) {
+    // The clipboard can refuse a read as it can a write (see [copySelection]),
+    // and the answer can come after this edit is gone: neither is anyone's to
+    // be told about, and a gone one has no state to set.
+    final ClipboardData? data;
+    try {
+      data = await Clipboard.getData(Clipboard.kTextPlain);
+    } on PlatformException {
+      return;
+    }
+    if (!mounted || data == null || data.text == null) {
       return;
     }
     final text = _currentEditingState.text;

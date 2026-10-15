@@ -8,6 +8,7 @@ import 'package:xterm/src/ui/custom_text_edit.dart';
 
 void main() {
   _richContentAndClipboard();
+  _pasteFailures();
 
   testWidgets('IME delete command emits a single backspace', (tester) async {
     final focusNode = FocusNode();
@@ -268,4 +269,57 @@ void _richContentAndClipboard() {
     expect(errors, isEmpty);
     expect(copied, isFalse);
   });
+}
+
+void _pasteFailures() {
+  testWidgets('a clipboard that refuses a read is not an error', (tester) async {
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async => call.method == 'Clipboard.getData'
+          ? throw PlatformException(code: 'Clipboard error')
+          : null,
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      ),
+    );
+    final state = await _pumpEdit(tester, onInsert: (_) {});
+
+    final errors = <Object>[];
+    await runZonedGuarded(
+      () => state.pasteText(SelectionChangedCause.keyboard),
+      (e, _) => errors.add(e),
+    );
+
+    expect(errors, isEmpty);
+  });
+
+  testWidgets('a clipboard answer after the edit is gone sets nothing', (
+    tester,
+  ) async {
+    final answer = Completer<Object?>();
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) => call.method == 'Clipboard.getData'
+          ? answer.future
+          : Future.value(),
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      ),
+    );
+    final state = await _pumpEdit(tester, onInsert: (_) {});
+
+    final paste = state.pasteText(SelectionChangedCause.keyboard);
+    await tester.pumpWidget(const SizedBox.shrink());
+    answer.complete(<String, dynamic>{'text': 'late'});
+    await paste;
+
+    expect(tester.takeException(), isNull);
+    // Without the guard this waits on a setState that never comes back.
+  }, timeout: const Timeout(Duration(seconds: 10)));
 }
