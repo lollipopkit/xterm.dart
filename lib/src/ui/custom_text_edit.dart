@@ -12,7 +12,8 @@ import 'package:xterm/src/ui/shortcut/shortcuts.dart';
 ///
 /// The [defaultItems] argument reflects the actions that would normally be
 /// shown (copy, paste, select all, etc.). Implementations can reuse or replace
-/// them when building the final list of entries to display.
+/// them when building the final list of entries to display. The result is
+/// shown as it is: an empty list means no toolbar.
 typedef CustomTextEditToolbarBuilder =
     List<ContextMenuButtonItem> Function(
       BuildContext context,
@@ -861,15 +862,13 @@ class CustomTextEditState extends State<CustomTextEdit>
     if (widget.toolbarBuilder == null) {
       return defaultItems;
     }
-    final customItems = widget.toolbarBuilder!(
+    // The complete list, as documented: empty is a builder asking for no
+    // menu, not for the defaults back.
+    return widget.toolbarBuilder!(
       context,
       this,
       List<ContextMenuButtonItem>.unmodifiable(defaultItems),
     );
-    if (customItems.isEmpty) {
-      return defaultItems;
-    }
-    return customItems;
   }
 
   @override

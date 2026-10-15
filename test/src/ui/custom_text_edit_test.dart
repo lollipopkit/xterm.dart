@@ -11,6 +11,7 @@ void main() {
   _pasteFailures();
   _imeReplacesPlaceholder();
   _imeEdits();
+  _toolbarBuilderContract();
 
   testWidgets('IME delete command emits a single backspace', (tester) async {
     final focusNode = FocusNode();
@@ -516,5 +517,73 @@ void _imeEdits() {
 
     expect(state.textEditingValue.selection, before);
     expect(inserted, isEmpty);
+  });
+}
+
+void _toolbarBuilderContract() {
+  Future<CustomTextEditState> pump(
+    WidgetTester tester,
+    CustomTextEditToolbarBuilder builder,
+  ) async {
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async => call.method == 'Clipboard.hasStrings'
+          ? <String, bool>{'value': true}
+          : null,
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      ),
+    );
+    final focusNode = FocusNode();
+    addTearDown(focusNode.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Material(
+          child: CustomTextEdit(
+            focusNode: focusNode,
+            onInsert: (_) {},
+            onDelete: () {},
+            onComposing: (_) {},
+            onAction: (_) {},
+            onKeyEvent: (_, _) => KeyEventResult.ignored,
+            hasSelection: () => true,
+            getSelectedText: () => 'x',
+            toolbarBuilder: builder,
+            child: const SizedBox.shrink(),
+          ),
+        ),
+      ),
+    );
+    final state = tester.state<CustomTextEditState>(
+      find.byType(CustomTextEdit),
+    );
+    // Once to learn the clipboard state, then for real.
+    state.showToolbar(globalSelectionRect: const Rect.fromLTWH(100, 200, 10, 10));
+    await tester.pumpAndSettle();
+    state.hideToolbar();
+    state.showToolbar(globalSelectionRect: const Rect.fromLTWH(100, 200, 10, 10));
+    await tester.pump();
+    return state;
+  }
+
+  testWidgets('a toolbar builder returning nothing shows no toolbar', (
+    tester,
+  ) async {
+    // Its result is the complete list: empty is not "the defaults, please".
+    final state = await pump(tester, (_, _, _) => const []);
+    expect(state.isToolbarShown, isFalse);
+    state.hideToolbar();
+  });
+
+  testWidgets('a toolbar builder returning the defaults shows them', (
+    tester,
+  ) async {
+    final state = await pump(tester, (_, _, defaults) => defaults);
+    expect(state.isToolbarShown, isTrue);
+    state.hideToolbar();
+    await tester.pump();
   });
 }
