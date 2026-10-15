@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:xterm/src/ui/shortcut/shortcuts.dart';
 
@@ -11,7 +12,8 @@ import 'package:xterm/src/ui/shortcut/shortcuts.dart';
 ///
 /// The [defaultItems] argument reflects the actions that would normally be
 /// shown (copy, paste, select all, etc.). Implementations can reuse or replace
-/// them when building the final list of entries to display.
+/// them when building the final list of entries to display. The result is
+/// shown as it is: an empty list means no toolbar.
 typedef CustomTextEditToolbarBuilder =
     List<ContextMenuButtonItem> Function(
       BuildContext context,
@@ -282,17 +284,25 @@ class CustomTextEditState extends State<CustomTextEdit>
 
   void _showCaretOnScreen() {
     if (_caretRect == Rect.zero) return;
-    final renderBox = context.findRenderObject() as RenderBox?;
-    if (renderBox == null || !renderBox.hasSize) return;
-    final scrollableState = Scrollable.maybeOf(context);
-    if (scrollableState == null) return;
-    scrollableState.position.ensureVisible(
-      renderBox,
-      alignment: 0.5,
-      duration: const Duration(milliseconds: 150),
-      curve: Curves.ease,
-      alignmentPolicy: ScrollPositionAlignmentPolicy.explicit,
-    );
+    // After the frame, not now: the input method can call in mid-layout, and
+    // `ensureVisible` walks up through ancestors that may not be laid out yet
+    // — a list item the host is still building threw (SERVERBOX-11T).
+    SchedulerBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final renderBox = context.findRenderObject() as RenderBox?;
+      if (renderBox == null || !renderBox.attached || !renderBox.hasSize) {
+        return;
+      }
+      final scrollableState = Scrollable.maybeOf(context);
+      if (scrollableState == null) return;
+      scrollableState.position.ensureVisible(
+        renderBox,
+        alignment: 0.5,
+        duration: const Duration(milliseconds: 150),
+        curve: Curves.ease,
+        alignmentPolicy: ScrollPositionAlignmentPolicy.explicit,
+      );
+    });
   }
 
   @override
@@ -501,25 +511,40 @@ class CustomTextEditState extends State<CustomTextEdit>
     _showCaretOnScreen();
   }
 
+  /// What a finished (not composing) update typed.
+  ///
+  /// Nothing in the buffer past the placeholder has reached the terminal: a
+  /// composition is only previewed, and the buffer is reset to the placeholder
+  /// after every commit. So whatever the IME left of the placeholder is all
+  /// that is not input, wherever it wrote — after it, over it, in place of a
+  /// composition, longer or shorter than what it replaced. Not an offset into
+  /// the previous text, which assumed the IME only ever appends.
+  String _typed(String currentText) {
+    final initialText = _initEditingState.text;
+    var kept = 0;
+    while (kept < initialText.length &&
+        kept < currentText.length &&
+        currentText.codeUnitAt(kept) == initialText.codeUnitAt(kept)) {
+      kept++;
+    }
+    return currentText.substring(kept);
+  }
+
   bool _processDeleteDetectionInput(
     String previousText,
     String currentText,
     int initTextLength,
   ) {
-    final String initialText = _initEditingState.text;
-    if (currentText.length < previousText.length &&
-        previousText == initialText &&
-        currentText.startsWith(initialText.substring(0, initTextLength - 1))) {
-      if (!_consumeImeDeleteSuppression()) {
-        widget.onDelete();
-        return true;
-      }
-    } else if (currentText.length > initTextLength &&
-        currentText.startsWith(initialText)) {
-      return _insertTextDelta(currentText.substring(initTextLength));
-    } else if (currentText.length > previousText.length &&
-        previousText == initialText) {
-      return _insertTextDelta(currentText.substring(initTextLength));
+    final typed = _typed(currentText);
+    if (typed.isNotEmpty) {
+      return _insertTextDelta(typed);
+    }
+    // Only placeholder left, and less of it: a backspace.
+    if (currentText.length < initTextLength &&
+        previousText == _initEditingState.text &&
+        !_consumeImeDeleteSuppression()) {
+      widget.onDelete();
+      return true;
     }
     return false;
   }
@@ -530,17 +555,17 @@ class CustomTextEditState extends State<CustomTextEdit>
     int initTextLength,
     bool wasComposing,
   ) {
-    if (wasComposing) {
-      // The committed text replaces the composing text entirely.
-      return _insertTextDelta(currentText.substring(initTextLength));
+    final typed = _typed(currentText);
+    if (typed.isNotEmpty) {
+      return _insertTextDelta(typed);
     }
-    if (currentText.length < previousText.length) {
-      if (!_consumeImeDeleteSuppression()) {
-        widget.onDelete();
-        return true;
-      }
-    } else if (currentText.length > previousText.length) {
-      return _insertTextDelta(currentText.substring(previousText.length));
+    // A composition given up leaves less text than it had, which is not a
+    // delete: none of it was sent.
+    if (!wasComposing &&
+        currentText.length < previousText.length &&
+        !_consumeImeDeleteSuppression()) {
+      widget.onDelete();
+      return true;
     }
     return false;
   }
@@ -560,11 +585,12 @@ class CustomTextEditState extends State<CustomTextEdit>
 
   @override
   void insertContent(KeyboardInsertedContent content) {
-    // Handle rich content insertion if needed
-    // For a terminal, this might involve converting to text or specific escape codes
-    if (content.data != null) {
-      widget.onInsert(utf8.decode(content.data!));
-    }
+    // Text only. A keyboard inserts stickers and GIFs this way too, whose
+    // bytes are an image a terminal cannot show and not UTF-8 at all: decoding
+    // them threw (SERVERBOX-146).
+    final data = content.data;
+    if (data == null || !content.mimeType.startsWith('text/')) return;
+    widget.onInsert(utf8.decode(data, allowMalformed: true));
   }
 
   @override
@@ -836,15 +862,13 @@ class CustomTextEditState extends State<CustomTextEdit>
     if (widget.toolbarBuilder == null) {
       return defaultItems;
     }
-    final customItems = widget.toolbarBuilder!(
+    // The complete list, as documented: empty is a builder asking for no
+    // menu, not for the defaults back.
+    return widget.toolbarBuilder!(
       context,
       this,
       List<ContextMenuButtonItem>.unmodifiable(defaultItems),
     );
-    if (customItems.isEmpty) {
-      return defaultItems;
-    }
-    return customItems;
   }
 
   @override
@@ -888,9 +912,16 @@ class CustomTextEditState extends State<CustomTextEdit>
       return;
     }
 
-    Clipboard.setData(ClipboardData(text: selectedText)).then((_) {
-      widget.onCopied?.call();
-    });
+    // The clipboard can refuse — on Windows another program may hold it open —
+    // and nothing awaits this to hear about it (SERVERBOX-1N7). Not copied is
+    // the outcome either way, so it is not reported as copied.
+    // Nor is a copy that lands after this edit is gone anyone's to report.
+    Clipboard.setData(ClipboardData(text: selectedText)).then(
+      (_) {
+        if (mounted) widget.onCopied?.call();
+      },
+      onError: (Object _) {},
+    );
 
     if (cause == SelectionChangedCause.toolbar) {
       hideToolbar();
@@ -911,12 +942,24 @@ class CustomTextEditState extends State<CustomTextEdit>
       return;
     }
     
-    final ClipboardData? data = await Clipboard.getData(Clipboard.kTextPlain);
-    if (data == null || data.text == null) {
+    // The clipboard can refuse a read as it can a write (see [copySelection]),
+    // and the answer can come after this edit is gone: neither is anyone's to
+    // be told about, and a gone one has no state to set.
+    final ClipboardData? data;
+    try {
+      data = await Clipboard.getData(Clipboard.kTextPlain);
+    } on PlatformException {
       return;
     }
-    final selection = _currentEditingState.selection;
+    if (!mounted || data == null || data.text == null) {
+      return;
+    }
     final text = _currentEditingState.text;
+    // An editing value with no selection (offsets of -1) has no before or
+    // after to split at; the paste goes at the end (SERVERBOX-1AL).
+    final selection = _currentEditingState.selection.isValid
+        ? _currentEditingState.selection
+        : TextSelection.collapsed(offset: text.length);
     final newText =
         selection.textBefore(text) + data.text! + selection.textAfter(text);
     textEditingValue = TextEditingValue(
@@ -1170,6 +1213,12 @@ class CustomTextEditState extends State<CustomTextEdit>
     final base = data['selectionBase'];
     final extent = data['selectionExtent'];
     if (base is int && extent is int) {
+      // Platform data, checked before it becomes the editing value: a range
+      // outside the text would break the next edit that reads it.
+      final length = _currentEditingState.text.length;
+      if (base < 0 || extent < 0 || base > length || extent > length) {
+        return true;
+      }
       final affinityIndex = data['selectionAffinity'];
       TextAffinity? affinity;
       if (affinityIndex is int &&

@@ -15,6 +15,8 @@ import 'package:xterm/xterm.dart';
 // the recorder more than the terminal.
 
 void main() {
+  _controllerSwap();
+
   testWidgets('growing a selection slides the highlight after it', (
     tester,
   ) async {
@@ -106,4 +108,43 @@ class _Harness {
     final cellHeight = box.paintBounds.height / terminal.viewHeight;
     return topLeft + Offset((column + 0.5) * cellWidth, 0.5 * cellHeight);
   }
+}
+
+void _controllerSwap() {
+  testWidgets('a replacement controller drives the selection, the old not', (
+    tester,
+  ) async {
+    final terminal = Terminal(maxLines: 32);
+    final first = TerminalController();
+    final second = TerminalController();
+    Widget view(TerminalController c) => MaterialApp(
+      home: Scaffold(body: TerminalView(terminal, controller: c)),
+    );
+    await tester.pumpWidget(view(first));
+    terminal.write('alpha beta gamma delta');
+    await tester.pump();
+
+    await tester.pumpWidget(view(second));
+    await tester.pump();
+    RenderTerminal render() =>
+        tester.allRenderObjects.whereType<RenderTerminal>().toSet().single;
+    CellAnchor at(int x) => terminal.buffer.createAnchor(x, 0);
+
+    // Made, then grown: the growth has somewhere to slide from only if the
+    // view heard the first change, from the controller it now has.
+    second.setSelection(at(0), at(3));
+    await tester.pump();
+    second.setSelection(at(0), at(6));
+    await tester.pump();
+    expect(render().selectionFrom, isNotNull);
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(render().selectionT, 1);
+
+    // The old controller is no longer the view's to answer.
+    first.setSelection(at(0), at(2));
+    await tester.pump();
+    first.setSelection(at(0), at(9));
+    await tester.pump();
+    expect(render().selectionT, 1);
+  });
 }

@@ -324,10 +324,22 @@ class TerminalViewState extends State<TerminalView>
       _updateCursorBlink(resetVisible: true);
     }
     if (oldWidget.controller != widget.controller) {
+      // The selection listener moves with the controller: left on the old one
+      // it went on answering for it and never heard the new one, and dispose
+      // removed it only from the new one.
+      _controller.removeListener(_handleSelectionChange);
       if (oldWidget.controller == null) {
         _controller.dispose();
       }
       _controller = widget.controller ?? TerminalController();
+      _controller.addListener(_handleSelectionChange);
+      // Nothing to slide from: the old controller's selection is not where
+      // the new one's came from.
+      _lastSelection = _controller.selection;
+      _selectionAnimationFrom = null;
+      _selectionAnimation.stop();
+      _selectionAnimation.value = 1;
+      _applySelectionAnimation();
     }
     if (oldWidget.scrollController != widget.scrollController) {
       if (oldWidget.scrollController == null) {
@@ -758,7 +770,9 @@ class TerminalViewState extends State<TerminalView>
 
   void _scrollToBottom() {
     final position = _scrollableKey.currentState?.position;
-    if (position != null) {
+    // A position not yet laid out has no extent: `maxScrollExtent` asserts one
+    // with `!`, and a key typed in that frame threw (SERVERBOX-14B).
+    if (position != null && position.hasContentDimensions) {
       position.animateTo(
         position.maxScrollExtent,
         duration: const Duration(milliseconds: 377),
