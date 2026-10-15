@@ -2,6 +2,7 @@ import 'package:test/test.dart';
 import 'package:xterm/xterm.dart';
 
 void main() {
+  _anchorFromStaleOffset();
   _scrollKeepsLinesAttached();
 
   group('Buffer.getText()', () {
@@ -341,5 +342,21 @@ void _scrollKeepsLinesAttached() {
       _expectLinesIndexed(terminal);
       expect(terminal.buffer.lines[0].toString(), isEmpty);
     });
+  });
+}
+
+void _anchorFromStaleOffset() {
+  test('an anchor from an offset past the buffer lands on its last cell', () {
+    // A selection's offsets outlive the rows they were taken on.
+    final terminal = Terminal();
+    terminal.resize(10, 5);
+    final lines = terminal.buffer.lines;
+
+    final anchor = terminal.buffer.createAnchorFromOffset(
+      CellOffset(40, lines.length + 20),
+    );
+
+    expect(anchor.y, lines.length - 1);
+    expect(anchor.x, lines[lines.length - 1].length);
   });
 }

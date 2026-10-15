@@ -729,8 +729,14 @@ class Buffer {
   }
 
   /// Create a new [CellAnchor] at the specified [x] and [y] coordinates.
+  ///
+  /// Clamped to the nearest cell that exists. A selection holds offsets across
+  /// frames, and the buffer can lose rows under it — a clear, a switch to the
+  /// alternate screen, a reflow — so an offset taken a moment ago may point
+  /// past the end by the time it is anchored (SERVERBOX-20P, SERVERBOX-R).
   CellAnchor createAnchorFromOffset(CellOffset offset) {
-    return lines[offset.y].createAnchor(offset.x);
+    final line = lines[offset.y.clamp(0, lines.length - 1)];
+    return line.createAnchor(offset.x.clamp(0, line.length));
   }
 
   CellAnchor createAnchorFromCursor() {
