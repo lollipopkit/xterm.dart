@@ -491,4 +491,82 @@ void main() {
       expect(item3.index, 0);
     });
   });
+
+  group('IndexAwareCircularBuffer eviction', () {
+    IndexAwareCircularBuffer<IndexedValue<int>> full(List<int> values) {
+      final cl = IndexAwareCircularBuffer<IndexedValue<int>>(values.length);
+      cl.pushAll(values.map((v) => v.indexed));
+      return cl;
+    }
+
+    List<int> evictedFrom(
+      IndexAwareCircularBuffer<IndexedValue<int>> cl,
+      void Function() change,
+    ) {
+      final out = <int>[];
+      void listener(IndexedValue<int> item) => out.add(item.value);
+
+      cl.addEvictListener(listener);
+      change();
+      cl.removeEvictListener(listener);
+      return out;
+    }
+
+    test('push into a full list evicts the oldest', () {
+      final cl = full([1, 2, 3]);
+      expect(evictedFrom(cl, () => cl.push(4.indexed)), [1]);
+      expect(cl.toList().map((e) => e.value), [2, 3, 4]);
+    });
+
+    test('insert into a full list evicts the oldest', () {
+      final cl = full([1, 2, 3]);
+      expect(evictedFrom(cl, () => cl.insert(2, 9.indexed)), [1]);
+      expect(cl.toList().map((e) => e.value), [2, 9, 3]);
+    });
+
+    test('insert at the front of a full list evicts the new item', () {
+      final cl = full([1, 2, 3]);
+      expect(evictedFrom(cl, () => cl.insert(0, 9.indexed)), [9]);
+      expect(cl.toList().map((e) => e.value), [1, 2, 3]);
+    });
+
+    test('trimStart, clear and a smaller maxLength evict in order', () {
+      var cl = full([1, 2, 3, 4]);
+      expect(evictedFrom(cl, () => cl.trimStart(2)), [1, 2]);
+      cl = full([1, 2, 3, 4]);
+      expect(evictedFrom(cl, () => cl.maxLength = 1), [1, 2, 3]);
+      cl = full([1, 2, 3]);
+      expect(evictedFrom(cl, cl.clear), [1, 2, 3]);
+    });
+
+    test('replaceWith evicts only what does not fit', () {
+      final cl = full([1, 2]);
+      final replacement = [5.indexed, 6.indexed, 7.indexed];
+      expect(evictedFrom(cl, () => cl.replaceWith(replacement)), [5]);
+      expect(cl.toList().map((e) => e.value), [6, 7]);
+    });
+
+    test('overwrites, swaps, pops and removes evict nothing', () {
+      final cl = full([1, 2, 3, 4]);
+      expect(
+        evictedFrom(cl, () {
+          cl[3] = 9.indexed;
+          cl[2] = cl.swap(1, 8.indexed);
+          cl.pop();
+          cl.remove(0);
+        }),
+        isEmpty,
+      );
+    });
+
+    test('a removed listener is not called', () {
+      final cl = full([1, 2]);
+      final out = <int>[];
+      void listener(IndexedValue<int> item) => out.add(item.value);
+      cl.addEvictListener(listener);
+      cl.removeEvictListener(listener);
+      cl.push(3.indexed);
+      expect(out, isEmpty);
+    });
+  });
 }
