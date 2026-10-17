@@ -20,6 +20,34 @@ class IndexAwareCircularBuffer<T extends IndexedItem> {
   /// overflow
   var _absoluteStartIndex = 0;
 
+  final _evictListeners = <void Function(T item)>[];
+
+  /// Calls [listener] with each item that leaves the front of the list, oldest
+  /// first and before it is detached: trimmed when the list is full, by
+  /// [trimStart], [clear] or a smaller [maxLength], and the part of a
+  /// [replaceWith] that does not fit.
+  ///
+  /// Not for an item overwritten in place or popped off the end: the first is
+  /// still where it was, and the second is nothing that scrolled away. With
+  /// this a reader can keep what scrolled off the top, which the indexes of
+  /// the items that are left cannot say: an insert into a full list moves
+  /// them up as far as the trim moves them down.
+  void addEvictListener(void Function(T item) listener) {
+    _evictListeners.add(listener);
+  }
+
+  void removeEvictListener(void Function(T item) listener) {
+    _evictListeners.remove(listener);
+  }
+
+  @pragma('vm:prefer-inline')
+  void _evict(T? item) {
+    if (item == null || _evictListeners.isEmpty) return;
+    for (var i = 0; i < _evictListeners.length; i++) {
+      _evictListeners[i](item);
+    }
+  }
+
   /// Gets the cyclic index for the specified regular index. The cyclic index
   /// can then be used on the backing array to get the element associated with
   /// the regular index.
@@ -97,6 +125,7 @@ class IndexAwareCircularBuffer<T extends IndexedItem> {
     if (copyLength > value) {
       copyStart = copyLength - value;
       for (var i = 0; i < copyStart; i++) {
+        _evict(_getChild(i));
         _dropChild(i);
       }
       _absoluteStartIndex += copyStart;
@@ -144,6 +173,7 @@ class IndexAwareCircularBuffer<T extends IndexedItem> {
   /// Removes all elements from the list.
   void clear() {
     for (var i = 0; i < _length; i++) {
+      _evict(_getChild(i));
       _dropChild(i);
     }
     _startIndex = 0;
@@ -160,6 +190,7 @@ class IndexAwareCircularBuffer<T extends IndexedItem> {
   /// Adds [value] to the end of the list. May cause the first element to be
   /// trimmed if the list is full.
   void push(T value) {
+    if (_length == _array.length) _evict(_getChild(0));
     _adoptChild(_length, value);
 
     if (_length == _array.length) {
@@ -219,9 +250,11 @@ class IndexAwareCircularBuffer<T extends IndexedItem> {
     if (index == 0 && _length >= _array.length) {
       // when something is inserted at index 0 and the list is full then
       // the new value immediately gets removed => nothing changes
+      _evict(item);
       return;
     }
 
+    if (_length >= _array.length) _evict(_getChild(0));
     for (var i = _length - 1; i >= index; i--) {
       _moveChild(i, i + 1);
     }
@@ -263,6 +296,7 @@ class IndexAwareCircularBuffer<T extends IndexedItem> {
     if (count > _length) count = _length;
 
     for (var i = 0; i < count; i++) {
+      _evict(_getChild(i));
       _dropChild(i);
     }
 
@@ -293,6 +327,9 @@ class IndexAwareCircularBuffer<T extends IndexedItem> {
     var copyStart = 0;
     if (replacement.length > maxLength) {
       copyStart = replacement.length - maxLength;
+    }
+    for (var i = 0; i < copyStart; i++) {
+      _evict(replacement[i]);
     }
 
     // Reset before adopting: `_adoptChild` places by `_startIndex`, so with
