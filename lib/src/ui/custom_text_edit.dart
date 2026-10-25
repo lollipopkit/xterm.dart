@@ -933,12 +933,15 @@ class CustomTextEditState extends State<CustomTextEdit>
     if (!pasteEnabled) {
       return;
     }
-    
+
+    // Whatever the clipboard turns out to hold. It was put away only after a
+    // paste that worked, so an empty or refused one left the menu up.
+    if (cause == SelectionChangedCause.toolbar) {
+      hideToolbar();
+    }
+
     if (widget.onPaste != null) {
       widget.onPaste!();
-      if (cause == SelectionChangedCause.toolbar) {
-        hideToolbar();
-      }
       return;
     }
     
@@ -968,9 +971,6 @@ class CustomTextEditState extends State<CustomTextEdit>
         offset: selection.start + data.text!.length,
       ),
     );
-    if (cause == SelectionChangedCause.toolbar) {
-      hideToolbar();
-    }
     _showCaretOnScreen();
   }
 
