@@ -66,7 +66,6 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
   CellOffset? _dragHandleFixedPoint; // The end a handle drag holds still.
   bool _isDragHandleReady = false; // A tap landed on a handle; a drag may come.
 
-  static const double _handleTouchRadius = 32.0;
   static const double _selectionTolerance = 20.0;
   static const Duration _tapTolerance = Duration(milliseconds: 150);
 
@@ -489,12 +488,21 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
         visualType,
         lineHeight,
       );
-      final Rect hitRect = Rect.fromLTWH(
+      final Rect handleRect = Rect.fromLTWH(
         anchor.dx - handleAnchor.dx,
         anchor.dy - handleAnchor.dy,
         handleSize.width,
         handleSize.height,
-      ).inflate(_handleTouchRadius);
+      );
+      // Out to the minimum touch target, as a text field's handles are. It
+      // was 32 pixels on every side, three rows under the selection on a
+      // phone, so a long press on the next lines took hold of a handle
+      // instead of selecting what it was on.
+      final Rect hitRect = Rect.fromCenter(
+        center: handleRect.center,
+        width: math.max(handleRect.width, kMinInteractiveDimension),
+        height: math.max(handleRect.height, kMinInteractiveDimension),
+      );
 
       if (!hitRect.contains(localPosition)) {
         return;
@@ -955,6 +963,10 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
 
       // A click anywhere else drops the selection, inside it or out.
       _clearSelection();
+    } else if (widget.showToolbar &&
+        widget.terminalView.isSelectionToolbarShown) {
+      // The menu a long press on nothing put up.
+      widget.terminalView.hideSelectionToolbar();
     }
   }
 
@@ -1472,19 +1484,18 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
     // This is a long press, not the click being held back.
     _cancelPendingTapDown();
 
-    // A handle is armed, and a long press on one means nothing.
+    // A handle is armed, and a long press on one starts nothing: adjusting a
+    // selection is what its handles are for. The release puts its menu up.
     if (_isDragHandleReady) {
       return;
     }
 
-    // A long press only starts a selection. Adjusting one that already
-    // exists is what its handles are for.
     if (_selectedRange != null && !_selectedRange!.isCollapsed) {
       // Outside it, so start again from here.
       if (!_isNearSelection(details.localPosition)) {
         _clearSelection();
       } else {
-        // On it, which is not a request for anything.
+        // On it, which asks for its menu, on release.
         return;
       }
     }
@@ -1569,20 +1580,47 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
   void _onLongPressEnd(LongPressEndDetails details) {
     terminalView.stopAutoScroll();
     _hideMagnifier();
+    _longPressInitialCellOffset = null;
 
-    // Only a long press that started a selection has anything to finish.
-    if (_longPressInitialCellOffset != null) {
-      _longPressInitialCellOffset = null;
-
-      if (widget.showToolbar &&
-          _selectedRange != null &&
-          !_selectedRange!.isCollapsed) {
-        final Rect? selectionRect = _currentSelectionGlobalRect();
-        if (selectionRect != null) {
-          widget.terminalView.showSelectionToolbar(selectionRect);
-        }
-      }
+    // The press that armed a handle became this long press, so the tap-up
+    // that would disarm it never comes. Left armed, every long press after
+    // this one returned at its first line, until a tap.
+    if (_isDragHandleReady && !_isDraggingHandle) {
+      _resetDragHandleState();
     }
+
+    if (!widget.showToolbar) {
+      return;
+    }
+
+    if (_selectedRange != null && !_selectedRange!.isCollapsed) {
+      final Rect? selectionRect = _currentSelectionGlobalRect();
+      if (selectionRect != null) {
+        widget.terminalView.showSelectionToolbar(selectionRect);
+      }
+      return;
+    }
+
+    // Nothing here to select. A menu anyway, which is how a touch screen
+    // pastes: a long press on an empty text field gives one too. A mouse has
+    // a secondary click for that, and a held click is not asking for a menu.
+    if (_isPointerKindMouse(_lastPointerDownKind)) {
+      return;
+    }
+    final cell = renderTerminal.getCellOffset(details.localPosition);
+    // The one cell the press took, which is nothing to copy.
+    _clearSelection();
+    widget.terminalView.showSelectionToolbar(_cellGlobalRect(cell));
+  }
+
+  Rect _cellGlobalRect(CellOffset cell) {
+    final topLeft = renderTerminal.getOffset(cell);
+    return Rect.fromPoints(
+      renderTerminal.localToGlobal(topLeft),
+      renderTerminal.localToGlobal(
+        topLeft + renderTerminal.cellSize.bottomRight(Offset.zero),
+      ),
+    );
   }
 
   Rect? _selectionRectForRange(BufferRangeLine range) {
