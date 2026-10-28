@@ -73,6 +73,18 @@ void main() {
   });
 
   group('Terminal.charInput', () {
+    test('alt sends ESC and the character, lower case for a letter', () {
+      final out = <String>[];
+      final t = Terminal(
+        platform: TerminalTargetPlatform.linux,
+        onOutput: out.add,
+      );
+      t.keyInput(TerminalKey.keyA, alt: true);
+      t.charInput('b'.codeUnitAt(0), alt: true);
+      t.charInput('.'.codeUnitAt(0), alt: true);
+      expect(out, ['\x1ba', '\x1bb', '\x1b.']);
+    });
+
     test('ctrl maps uppercase and lowercase letters to C0 controls', () {
       final output = <String>[];
       final terminal = Terminal(onOutput: output.add);
@@ -83,6 +95,21 @@ void main() {
       expect(terminal.charInput('z'.codeUnitAt(0), ctrl: true), isTrue);
 
       expect(output, ['\x01', '\x01', '\x1a', '\x1a']);
+    });
+  });
+
+  group('Terminal.keyInput', () {
+    test('arrows carry the modifiers held', () {
+      final out = <String>[];
+      final t = Terminal(
+        platform: TerminalTargetPlatform.linux,
+        onOutput: out.add,
+      );
+      t.keyInput(TerminalKey.arrowUp, shift: true);
+      t.keyInput(TerminalKey.arrowUp, alt: true);
+      t.keyInput(TerminalKey.arrowUp, ctrl: true);
+      t.keyInput(TerminalKey.arrowDown, ctrl: true, alt: true);
+      expect(out, ['\x1b[1;2A', '\x1b[1;3A', '\x1b[1;5A', '\x1b[1;7B']);
     });
   });
 
