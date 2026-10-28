@@ -451,21 +451,17 @@ void main() {
       expect(terminal.reverseDisplayMode, isFalse);
     });
 
-    test('DECCOLM switches between 80 and 132 columns and clears screen', () {
+    test('DECCOLM is ignored, so reset keeps the width and the screen', () {
       final terminal = Terminal();
       terminal.resize(10, 3);
 
       terminal.write('abc\x1b[?3h');
-      expect(terminal.viewWidth, 132);
-      expect(terminal.buffer.cursorX, 0);
-      expect(terminal.buffer.cursorY, 0);
-      expect(terminal.buffer.lines[0].getText(), isEmpty);
+      expect(terminal.viewWidth, 10);
+      expect(terminal.buffer.lines[0].getText(), 'abc');
 
-      terminal.write('X\x1b[?3l');
-      expect(terminal.viewWidth, 80);
-      expect(terminal.buffer.cursorX, 0);
-      expect(terminal.buffer.cursorY, 0);
-      expect(terminal.buffer.lines[0].getText(), isEmpty);
+      terminal.write('\x1b[?3l');
+      expect(terminal.viewWidth, 10);
+      expect(terminal.buffer.lines[0].getText(), 'abc');
     });
   });
 
@@ -983,13 +979,15 @@ void main() {
       expect(lastData, ['world']);
     });
 
-    test('OSC does not terminate on ESC without backslash', () {
+    test('ESC without backslash ends an OSC and starts its own sequence', () {
       String? title;
       final terminal = Terminal(onTitleChange: (value) => title = value);
 
-      terminal.write('\x1b]2;hello\x1bXworld\x07');
+      terminal.write('\x1b]2;hello\x1b[31mRED\x07after');
 
-      expect(title, 'hello\x1bXworld');
+      expect(title, 'hello');
+      expect(terminal.buffer.lines[0].getText().trimRight(), 'REDafter');
+      expect(terminal.cursor.foreground, isNot(0));
     });
 
     test('common OSC preserves semicolons in payload', () {

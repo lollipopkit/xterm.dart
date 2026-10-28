@@ -1,3 +1,5 @@
+import 'dart:math' show min;
+
 import 'package:xterm/src/core/color.dart';
 import 'package:xterm/src/core/mouse/mode.dart';
 import 'package:xterm/src/core/escape/handler.dart';
@@ -34,31 +36,25 @@ class EscapeParser {
 
   void _process() {
     while (_queue.isNotEmpty) {
-      if (_discardingOsc) {
-        if (!_discardOsc()) return;
+      if (_discarding != _Discard.none) {
+        if (!_discard()) return;
+        continue;
+      }
+      if (_oscInProgress) {
+        if (!_escHandleOSC()) return;
         continue;
       }
       tokenBegin = _queue.totalConsumed;
+      _c0Seen = 0;
       final char = _queue.consume();
 
+      var processed = true;
       if (char == Ascii.ESC) {
-        final processed = _processEscape();
-        if (!processed) {
-          _queue.rollback(tokenEnd - tokenBegin);
-          return;
-        }
+        processed = _processEscape();
       } else if (char == _c1ControlSequenceIntroducer) {
-        final processed = _escHandleCSI();
-        if (!processed) {
-          _queue.rollback(tokenEnd - tokenBegin);
-          return;
-        }
+        processed = _escHandleCSI();
       } else if (char == _c1OperatingSystemCommand) {
-        final processed = _escHandleOSC();
-        if (!processed) {
-          _queue.rollback(tokenEnd - tokenBegin);
-          return;
-        }
+        processed = _escHandleOSC();
       } else if (_processC1Control(char)) {
         // Handled above.
       } else if (char == _c1SingleShift2) {
@@ -66,15 +62,33 @@ class EscapeParser {
       } else if (char == _c1SingleShift3) {
         handler.singleShift(3);
       } else if (_isC1StringControl(char)) {
-        final processed = _consumeStringControl();
-        if (!processed) {
-          _queue.rollback(tokenEnd - tokenBegin);
-          return;
-        }
+        processed = _consumeStringControl();
       } else {
         _processChar(char);
       }
+
+      if (!processed) {
+        // An OSC keeps what it has read so far. Anything else is short and
+        // is read again whole once the rest of it arrives.
+        if (!_oscInProgress) _queue.rollback(tokenEnd - tokenBegin);
+        return;
+      }
+      _c0Executed = 0;
     }
+  }
+
+  /// How many C0 controls the sequence being read has met, and how many of
+  /// those have been carried out. A control inside a sequence takes effect
+  /// where it is, as in every terminal; a sequence cut off by the end of a
+  /// [write] is read again from its start, and without this its controls
+  /// ran again too, a line feed moving the cursor twice.
+  var _c0Seen = 0;
+  var _c0Executed = 0;
+
+  void _processSequenceControl(int char) {
+    if (_c0Seen++ < _c0Executed) return;
+    _c0Executed = _c0Seen;
+    _processChar(char);
   }
 
   bool _processC1Control(int char) {
@@ -141,7 +155,7 @@ class EscapeParser {
       }
 
       if (escapeChar > Ascii.NULL && escapeChar < Ascii.space) {
-        _processChar(escapeChar);
+        _processSequenceControl(escapeChar);
         continue;
       }
 
@@ -149,10 +163,34 @@ class EscapeParser {
 
       if (escapeHandler == null) {
         handler.unkownEscape(escapeChar);
+        if (escapeChar >= Ascii.space && escapeChar <= Ascii.slash) {
+          return _skipEscapeIntermediates();
+        }
         return true;
       }
 
       return escapeHandler();
+    }
+  }
+
+  /// The rest of an escape sequence with an intermediate byte nothing here
+  /// knows: more intermediates and then the final byte, all dropped. Left
+  /// alone, the final byte was printed as text.
+  bool _skipEscapeIntermediates() {
+    while (true) {
+      if (_queue.isEmpty) return false;
+      final char = _queue.consume();
+      if (_isCancelControl(char)) return true;
+      if (char == Ascii.ESC) {
+        _queue.rollback();
+        return true;
+      }
+      if (char > Ascii.NULL && char < Ascii.space) {
+        _processSequenceControl(char);
+        continue;
+      }
+      if (char >= Ascii.space && char <= Ascii.slash) continue;
+      return true;
     }
   }
 
@@ -295,7 +333,7 @@ class EscapeParser {
       }
 
       if (char > Ascii.NULL && char < Ascii.space) {
-        _processChar(char);
+        _processSequenceControl(char);
         continue;
       }
 
@@ -425,6 +463,12 @@ class EscapeParser {
     intermediates: [],
   );
 
+  /// The longest CSI read, in runes.
+  static const maxCsiLength = 1024;
+
+  /// The largest value a CSI parameter takes.
+  static const maxParam = 65535;
+
   /// Parse a CSI from the head of the queue. Return false if the CSI isn't
   /// complete. After a CSI is successfully parsed, [_csi] is updated.
   bool _consumeCsi() {
@@ -447,6 +491,7 @@ class EscapeParser {
 
     var param = 0;
     var hasParam = false;
+    var length = 0;
     while (true) {
       // The sequence isn't completed, just ignore it.
       if (_queue.isEmpty) {
@@ -454,6 +499,15 @@ class EscapeParser {
       }
 
       final char = _queue.consume();
+
+      // Longer than any real one. Read again from its start on every write
+      // while it lasts, so the rest is dropped as it comes instead.
+      if (++length > maxCsiLength) {
+        _csi.finalByte = 0;
+        _queue.rollback();
+        _discarding = _Discard.csi;
+        return true;
+      }
 
       if (_isCancelControl(char)) {
         _csi.finalByte = 0;
@@ -467,7 +521,7 @@ class EscapeParser {
       }
 
       if (char > Ascii.NULL && char < Ascii.space) {
-        _processChar(char);
+        _processSequenceControl(char);
         continue;
       }
 
@@ -481,8 +535,9 @@ class EscapeParser {
 
       if (char >= Ascii.num0 && char <= Ascii.num9) {
         hasParam = true;
-        param *= 10;
-        param += char - Ascii.num0;
+        // Capped as xterm caps them: a count is looped over, and a larger
+        // one only stalls the terminal or overflows.
+        param = min(param * 10 + char - Ascii.num0, maxParam);
         continue;
       }
 
@@ -976,14 +1031,10 @@ class EscapeParser {
       case 6: // Lower Terminal Window
       case 7: // Refresh/Redraw Terminal Window
         return;
+      // Not taken from the remote end: the view decides the size, and a
+      // program could otherwise make the terminal any size at all. xterm
+      // also refuses it unless `allowWindowOps` is set.
       case 8: // Set Terminal Window Size (in characters)
-        // This CSI contains 2 more parameters: width and height.
-        if (_csi.params.length != 3) {
-          return;
-        }
-        final rows = _csi.params[1];
-        final cols = _csi.params[2];
-        handler.resize(cols, rows);
         return;
       // Window handling is currently no in the scope of the package.
       case 9: // Maximize Terminal Window
@@ -1465,74 +1516,85 @@ class EscapeParser {
 
   final _osc = <String>[];
 
-  /// The longest OSC kept, in runes. An unterminated one otherwise holds
-  /// every later byte in the queue and is rescanned from its start on each
-  /// [write]; past this it is discarded up to its terminator instead.
+  /// The longest OSC kept, in runes. Past this it is discarded up to its
+  /// terminator.
   static const maxOscLength = 2 * 1024 * 1024;
 
-  /// Whether the rest of an over-long OSC is being dropped.
-  var _discardingOsc = false;
+  /// What of a sequence is being dropped as it arrives.
+  var _discarding = _Discard.none;
 
-  /// Drops the rest of an over-long OSC. Returns false while its terminator
-  /// has not arrived.
-  bool _discardOsc() {
+  /// Drops the rest of a sequence that is not kept. Returns false while its
+  /// end has not arrived.
+  bool _discard() {
     while (_queue.isNotEmpty) {
       final char = _queue.consume();
-      if (char == Ascii.BEL ||
-          char == _c1StringTerminator ||
-          _isCancelControl(char)) {
-        _discardingOsc = false;
+      if (_isCancelControl(char)) {
+        _discarding = _Discard.none;
         return true;
       }
       if (char == Ascii.ESC) {
-        if (_queue.isEmpty) {
-          // Kept for the next write, which may complete ST.
-          _queue.rollback();
-          return false;
+        if (_discarding != _Discard.csi) {
+          if (_queue.isEmpty) {
+            // Kept for the next write, which may complete ST.
+            _queue.rollback();
+            return false;
+          }
+          if (_queue.peek() == Ascii.backslash) {
+            _queue.consume();
+            _discarding = _Discard.none;
+            return true;
+          }
         }
-        if (_queue.consume() == Ascii.backslash) {
-          _discardingOsc = false;
-          return true;
-        }
+        // Any other escape begins a sequence of its own, ending this one.
+        _queue.rollback();
+        _discarding = _Discard.none;
+        return true;
+      }
+      switch (_discarding) {
+        case _Discard.osc:
+          if (char == Ascii.BEL || char == _c1StringTerminator) {
+            _discarding = _Discard.none;
+            return true;
+          }
+        case _Discard.string:
+          if (char == _c1StringTerminator) {
+            _discarding = _Discard.none;
+            return true;
+          }
+        case _Discard.csi:
+          if (char > Ascii.NULL && char < Ascii.space) {
+            _processChar(char);
+          } else if (char >= Ascii.atSign && char <= Ascii.tilde) {
+            _discarding = _Discard.none;
+            return true;
+          }
+        case _Discard.none:
+          assert(false);
       }
     }
     return false;
   }
 
+  /// DCS, SOS, PM and APC: none is acted on, so each is dropped as it
+  /// arrives, up to its terminator.
   bool _consumeStringControl() {
-    while (true) {
-      if (_queue.isEmpty) {
-        return false;
-      }
-
-      final char = _queue.consume();
-      if (_isCancelControl(char)) {
-        return true;
-      }
-      if (char == _c1StringTerminator) {
-        return true;
-      }
-
-      if (char == Ascii.ESC) {
-        if (_queue.isEmpty) {
-          return false;
-        }
-        final next = _queue.peek();
-        if (_isCancelControl(next)) {
-          return true;
-        }
-        if (next == Ascii.backslash) {
-          _queue.consume();
-          return true;
-        }
-      }
-    }
+    _discarding = _Discard.string;
+    return true;
   }
 
+  /// An OSC is read as it arrives, across writes: a large one, a clipboard
+  /// write, was read again from its start on every write until it ended.
+  var _oscInProgress = false;
+  final _oscParam = StringBuffer();
+  var _oscLength = 0;
+
   bool _consumeOsc() {
-    _osc.clear();
-    final param = StringBuffer();
-    var length = 0;
+    if (!_oscInProgress) {
+      _osc.clear();
+      _oscParam.clear();
+      _oscLength = 0;
+      _oscInProgress = true;
+    }
 
     while (true) {
       if (_queue.isEmpty) {
@@ -1540,51 +1602,68 @@ class EscapeParser {
       }
 
       final char = _queue.consume();
-      if (++length > maxOscLength) {
-        _osc.clear();
-        _discardingOsc = true;
+      if (++_oscLength > maxOscLength) {
+        _endOsc(complete: false);
+        _discarding = _Discard.osc;
         return true;
       }
 
       if (_isCancelControl(char)) {
-        _osc.clear();
+        _endOsc(complete: false);
         return true;
       }
 
       // OSC terminates with BEL or 8-bit ST.
       if (char == Ascii.BEL || char == _c1StringTerminator) {
-        _osc.add(param.toString());
+        _endOsc(complete: true);
         return true;
       }
 
       /// OSC terminates with ST
       if (char == Ascii.ESC) {
         if (_queue.isEmpty) {
+          // Left in the queue for the next write, which may complete ST.
+          _queue.rollback();
+          _oscLength--;
           return false;
         }
 
-        final next = _queue.consume();
-        if (next == Ascii.backslash) {
-          _osc.add(param.toString());
+        if (_queue.consume() == Ascii.backslash) {
+          _endOsc(complete: true);
           return true;
         }
 
-        param.writeCharCode(char);
-        param.writeCharCode(next);
-        continue;
+        // Any other escape ends the OSC, which is acted on with what it has,
+        // and begins a sequence of its own: the DEC parser's `osc_end` on
+        // leaving the string, as xterm.js has it.
+        _queue.rollback(2);
+        _endOsc(complete: true);
+        return true;
       }
 
       /// Parse next parameter
       if (char == Ascii.semicolon) {
-        _osc.add(param.toString());
-        param.clear();
+        _osc.add(_oscParam.toString());
+        _oscParam.clear();
         continue;
       }
 
-      param.writeCharCode(char);
+      _oscParam.writeCharCode(char);
     }
   }
+
+  void _endOsc({required bool complete}) {
+    if (complete) {
+      _osc.add(_oscParam.toString());
+    } else {
+      _osc.clear();
+    }
+    _oscParam.clear();
+    _oscInProgress = false;
+  }
 }
+
+enum _Discard { none, osc, string, csi }
 
 class _Csi {
   _Csi({

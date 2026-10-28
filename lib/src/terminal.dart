@@ -163,10 +163,6 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
 
   bool _bracketedPasteMode = false;
 
-  bool _savedOriginMode = false;
-
-  bool _savedAutoWrapMode = true;
-
   /* State getters */
 
   /// Number of cells in a terminal row.
@@ -555,16 +551,14 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
 
   @override
   void saveCursor() {
-    _savedOriginMode = _originMode;
-    _savedAutoWrapMode = _autoWrapMode;
     _buffer.saveCursor();
   }
 
   @override
   void restoreCursor() {
-    _originMode = _savedOriginMode;
-    _autoWrapMode = _savedAutoWrapMode;
     _buffer.restoreCursor();
+    _originMode = _buffer.savedOriginMode;
+    _autoWrapMode = _buffer.savedAutoWrapMode;
   }
 
   @override
@@ -627,8 +621,6 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
     _altBufferMouseScrollMode = false;
     _bracketedPasteMode = false;
     _precedingCodepoint = 0;
-    _savedOriginMode = false;
-    _savedAutoWrapMode = true;
     _cursorStyle.reset();
     _tabStops.reset();
     _mainBuffer.reset();
@@ -656,8 +648,6 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
     _altBufferMouseScrollMode = false;
     _bracketedPasteMode = false;
     _precedingCodepoint = 0;
-    _savedOriginMode = false;
-    _savedAutoWrapMode = true;
     _cursorStyle.reset();
     _mainBuffer.softReset();
     _altBuffer.softReset();
@@ -743,21 +733,27 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
 
   @override
   void sendCursorPosition() {
-    onOutput?.call(_emitter.cursorPosition(_reportedCursorX, _buffer.cursorY));
+    onOutput?.call(_emitter.cursorPosition(_reportedCursorX, _reportedCursorY));
   }
 
   @override
   void sendExtendedCursorPosition() {
     onOutput?.call(
-      _emitter.extendedCursorPosition(_reportedCursorX, _buffer.cursorY),
+      _emitter.extendedCursorPosition(_reportedCursorX, _reportedCursorY),
     );
   }
 
   int get _reportedCursorX => min(_buffer.cursorX, viewWidth - 1);
 
+  /// From the top margin in origin mode, which is where CUP counts from too.
+  int get _reportedCursorY =>
+      _originMode ? _buffer.cursorY - _buffer.marginTop : _buffer.cursorY;
+
   @override
   void setMargins(int top, [int? bottom]) {
-    final resolvedBottom = bottom ?? viewHeight - 1;
+    // A bottom past the screen is the last row; a top that is not above the
+    // bottom leaves the margins as they were.
+    final resolvedBottom = min(bottom ?? viewHeight - 1, viewHeight - 1);
     if (top >= resolvedBottom) {
       return;
     }
@@ -892,14 +888,11 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
     _buffer.setCursor(0, 0);
   }
 
+  /// DECCOLM is ignored, as xterm ignores it unless mode 40 allows it: the
+  /// view decides the width, and `reset` sends `CSI ? 3 l`, which left any
+  /// terminal 80 columns wide and cleared.
   @override
-  void setColumnMode(bool enabled) {
-    resize(enabled ? 132 : 80, _viewHeight);
-    _buffer.clear();
-    _buffer.resetVerticalMargins();
-    _buffer.setCursor(0, 0);
-    _tabStops.reset();
-  }
+  void setColumnMode(bool enabled) {}
 
   @override
   void setAutoWrapMode(bool enabled) {

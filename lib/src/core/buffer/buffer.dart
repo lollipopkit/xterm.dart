@@ -50,6 +50,12 @@ class Buffer {
 
   final _savedCursorStyle = CursorStyle();
 
+  /// The modes DECSC saves with the cursor. Each screen has its own, like the
+  /// cursor itself.
+  var savedOriginMode = false;
+
+  var savedAutoWrapMode = true;
+
   final charset = Charset();
 
   /// Width of the viewport in columns. Also the index of the last column.
@@ -421,16 +427,9 @@ class Buffer {
       return;
     }
 
-    // the cursor is not in the scrollable region
-    if (_cursorY >= viewHeight - 1) {
-      // we are at the bottom
-      if (isAltBuffer) {
-        scrollUp(1);
-      } else {
-        lines.push(_newEmptyLine());
-      }
-    } else {
-      // there're still lines so we simply move cursor down.
+    // Outside the scroll region, which is then not the whole screen: nothing
+    // scrolls, and at the last row the cursor stays put.
+    if (_cursorY < viewHeight - 1) {
       moveCursorY(1);
     }
   }
@@ -502,9 +501,13 @@ class Buffer {
     final cursorY = _cursorY + offset;
     if (terminal.originMode) {
       _cursorY = cursorY.clamp(_marginTop, _marginBottom);
-    } else {
-      setCursorY(cursorY);
+      return;
     }
+    // A margin stops the cursor from the side it is on, as in xterm: one
+    // within the region stays within it, and one outside crosses nothing.
+    final top = _cursorY < _marginTop ? 0 : _marginTop;
+    final bottom = _cursorY > _marginBottom ? viewHeight - 1 : _marginBottom;
+    _cursorY = cursorY.clamp(top, bottom);
   }
 
   void setCursor(int cursorX, int cursorY) {
@@ -531,6 +534,8 @@ class Buffer {
     _savedCursorStyle.foreground = terminal.cursor.foreground;
     _savedCursorStyle.background = terminal.cursor.background;
     _savedCursorStyle.attrs = terminal.cursor.attrs;
+    savedOriginMode = terminal.originMode;
+    savedAutoWrapMode = terminal.autoWrapMode;
     charset.save();
   }
 
@@ -599,6 +604,10 @@ class Buffer {
         line.setCell(x, codePoint, 1, terminal.cursor);
       }
     }
+    // And, as in xterm, the margins reset and the cursor home.
+    resetVerticalMargins();
+    _cursorX = 0;
+    _cursorY = 0;
   }
 
   /// Soft-resets state associated with this buffer without clearing content.
@@ -609,6 +618,8 @@ class Buffer {
     _savedCursorX = 0;
     _savedCursorY = 0;
     _savedCursorStyle.reset();
+    savedOriginMode = false;
+    savedAutoWrapMode = true;
     charset.reset();
   }
 
