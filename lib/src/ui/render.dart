@@ -2,6 +2,7 @@ import 'dart:math' show max;
 import 'dart:ui';
 
 import 'package:flutter/rendering.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/widgets.dart';
 import 'package:xterm/src/core/buffer/cell_offset.dart';
 import 'package:xterm/src/core/buffer/line.dart';
@@ -546,10 +547,50 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
       _viewportHeight ~/ _painter.cellSize.height,
     );
 
-    if (_viewportSize != viewportSize) {
-      _viewportSize = viewportSize;
-      _resizeTerminalIfNeeded();
+    final previous = _viewportSize;
+    if (previous == viewportSize) return;
+    _viewportSize = viewportSize;
+
+    // A height that changes frame after frame is an animation, as a soft
+    // keyboard's: each size would reach the program as a SIGWINCH and its
+    // redraw arrive for a size already gone. The view clips to the bottom
+    // meanwhile, and the terminal takes the size the animation ends at.
+    if (previous != null && previous.width == viewportSize.width) {
+      _heightChanged = true;
+      if (!_heightSettling) {
+        _heightSettling = true;
+        SchedulerBinding.instance.addPostFrameCallback(_settleHeight);
+      }
+      return;
     }
+    _resizeTerminalIfNeeded();
+  }
+
+  bool _heightChanged = false;
+  bool _heightSettling = false;
+
+  void _settleHeight(Duration _) {
+    if (!attached) {
+      _heightSettling = false;
+      return;
+    }
+    if (_heightChanged) {
+      // Changed in this frame; one frame more decides whether it goes on.
+      _heightChanged = false;
+      SchedulerBinding.instance
+        ..addPostFrameCallback(_settleHeight)
+        ..scheduleFrame();
+      return;
+    }
+    _heightSettling = false;
+    final size = _viewportSize;
+    if (size == null) return;
+    if (size.width == _terminal.viewWidth &&
+        size.height == _terminal.viewHeight) {
+      return;
+    }
+    _resizeTerminalIfNeeded();
+    markNeedsLayout();
   }
 
   /// Notify the underlying terminal that the viewport size has changed.

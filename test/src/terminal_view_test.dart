@@ -176,6 +176,46 @@ void main() {
       expect(releases, presses);
     });
 
+    testWidgets('a height that animates resizes once, when it settles', (
+      tester,
+    ) async {
+      final sizes = <(int, int)>[];
+      final terminal = Terminal(onResize: (w, h, _, _) => sizes.add((w, h)));
+      final height = ValueNotifier(600.0);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ValueListenableBuilder(
+            valueListenable: height,
+            builder: (_, value, _) => Align(
+              alignment: Alignment.topLeft,
+              child: SizedBox(
+                width: 400,
+                height: value,
+                child: TerminalView(terminal),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      final rows = terminal.viewHeight;
+      expect(sizes, [(terminal.viewWidth, rows)]);
+
+      // A soft keyboard's inset, a step every frame.
+      for (var i = 0; i < 10; i++) {
+        height.value -= 30;
+        await tester.pump(const Duration(milliseconds: 16));
+        expect(terminal.viewHeight, rows);
+      }
+      await tester.pump(const Duration(milliseconds: 16));
+      await tester.pump(const Duration(milliseconds: 16));
+
+      final cell = _render(tester).cellSize;
+      expect(sizes, hasLength(2));
+      expect(terminal.viewHeight, 300 ~/ cell.height);
+      expect(sizes.last, (terminal.viewWidth, terminal.viewHeight));
+    });
+
     testWidgets('a side inset moves the text and the hit test together', (
       tester,
     ) async {
