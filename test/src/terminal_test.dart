@@ -620,13 +620,15 @@ void main() {
   });
 
   group('Terminal.deleteChars', () {
-    test('DCH is a no-op in pending-wrap column', () {
+    test('DCH in the pending-wrap column deletes the last cell', () {
+      // As xterm and xterm.js do: the pending wrap is dropped and the cursor
+      // is on the last column.
       final terminal = Terminal();
       terminal.resize(4, 2);
 
       terminal.write('abcd\x1b[P');
 
-      expect(terminal.buffer.lines[0].getText(), 'abcd');
+      expect(terminal.buffer.lines[0].getText().trimRight(), 'abc');
       expect(terminal.buffer.cursorX, 3);
       expect(terminal.buffer.cursorY, 0);
     });

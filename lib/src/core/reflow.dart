@@ -83,9 +83,15 @@ class _LineReflow {
   void add(BufferLine line) {
     final trimmedLength = line.getTrimmedLength(oldWidth);
 
-    // A fast path for empty lines
     if (trimmedLength == 0) {
-      _lines.add(line);
+      // A fast path for an empty line that starts the logical line.
+      if (_lines.isEmpty && _builder.isEmpty) {
+        _lines.add(line);
+        return;
+      }
+      // An empty continuation adds no cells, only its anchors. Added as a
+      // line of its own it went ahead of the text still in the builder.
+      _addPart(line, from: 0, to: 0);
       return;
     }
 
