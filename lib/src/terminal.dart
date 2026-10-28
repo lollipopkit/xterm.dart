@@ -386,7 +386,8 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
     }
   }
 
-  // Handle a mouse event and return true if it was handled.
+  /// Handles a mouse event and returns true if it was reported. [position] is
+  /// on the screen, counted from its top-left cell, not from the buffer's.
   bool mouseInput(
     TerminalMouseButton button,
     TerminalMouseButtonState buttonState,

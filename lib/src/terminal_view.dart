@@ -8,8 +8,6 @@ import 'package:xterm/src/core/buffer/cell_offset.dart';
 import 'package:xterm/src/core/buffer/range.dart';
 import 'package:xterm/src/core/cursor_type.dart';
 import 'package:xterm/src/core/input/keys.dart';
-import 'package:xterm/src/core/mouse/button.dart';
-import 'package:xterm/src/core/mouse/button_state.dart';
 import 'package:xterm/src/core/mouse/mode.dart';
 import 'package:xterm/src/terminal.dart';
 import 'package:xterm/src/ui/controller.dart';
@@ -451,7 +449,7 @@ class TerminalViewState extends State<TerminalView>
     child = TerminalScrollGestureHandler(
       terminal: widget.terminal,
       simulateScroll: widget.simulateScroll,
-      getCellOffset: (offset) => renderTerminal.getCellOffset(offset),
+      getCellOffset: (offset) => renderTerminal.getScreenCellOffset(offset),
       getLineHeight: () => renderTerminal.lineHeight,
       child: child,
     );
@@ -650,11 +648,6 @@ class TerminalViewState extends State<TerminalView>
   void _onTapUp(TapUpDetails details) {
     final offset = renderTerminal.getCellOffset(details.localPosition);
     widget.onTapUp?.call(details, offset);
-    widget.terminal.mouseInput(
-      TerminalMouseButton.left,
-      TerminalMouseButtonState.up,
-      offset,
-    );
   }
 
   void _onTapDown(TapDownDetails details) {
@@ -667,12 +660,6 @@ class TerminalViewState extends State<TerminalView>
     }
 
     _updateCursorBlink(resetVisible: true);
-
-    widget.terminal.mouseInput(
-      TerminalMouseButton.left,
-      TerminalMouseButtonState.down,
-      renderTerminal.getCellOffset(details.localPosition),
-    );
   }
 
   void _onSecondaryTapDown(TapDownDetails details) {

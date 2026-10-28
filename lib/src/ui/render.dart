@@ -389,6 +389,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
       _controller.setSelection(
         _terminal.buffer.createAnchorFromOffset(from),
         _terminal.buffer.createAnchorFromOffset(from),
+        mode: SelectionMode.line,
       );
     } else {
       if (to.x >= from.x) {
@@ -397,6 +398,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
       _controller.setSelection(
         _terminal.buffer.createAnchorFromOffset(from),
         _terminal.buffer.createAnchorFromOffset(to),
+        mode: SelectionMode.line,
       );
     }
   }
@@ -418,11 +420,19 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     }
     final start = buffer.createAnchor(0, 0);
     final end = buffer.createAnchor(buffer.viewWidth, buffer.height - 1);
-    _controller.setSelection(start, end);
+    _controller.setSelection(start, end, mode: SelectionMode.line);
   }
 
   void clearSelection() {
     _controller.clearSelection();
+  }
+
+  /// The cell at [offset] counted from the top of the screen rather than of
+  /// the buffer, which is what a mouse report carries. A line in the
+  /// scrollback is above the screen, so its row is negative.
+  CellOffset getScreenCellOffset(Offset offset) {
+    final cell = getCellOffset(offset);
+    return CellOffset(cell.x, cell.y - _terminal.buffer.scrollBack);
   }
 
   /// Send a mouse event at [offset] with [button] being currently in [buttonState].
@@ -431,8 +441,11 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     TerminalMouseButtonState buttonState,
     Offset offset,
   ) {
-    final position = getCellOffset(offset);
-    return _terminal.mouseInput(button, buttonState, position);
+    return _terminal.mouseInput(
+      button,
+      buttonState,
+      getScreenCellOffset(offset),
+    );
   }
 
   void _notifyEditableRect() {

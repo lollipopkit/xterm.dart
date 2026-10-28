@@ -133,6 +133,33 @@ void main() {
       expect(output, ['\x1B[M ++']);
     });
 
+    test('reports a move with a button held from mode 1002 on', () {
+      final output = <String>[];
+      final terminal = Terminal(onOutput: output.add);
+
+      void move(TerminalMouseButton button) {
+        terminal.mouseInput(
+          button,
+          TerminalMouseButtonState.motion,
+          CellOffset(1, 1),
+        );
+      }
+
+      terminal.write('\x1b[?1000h\x1b[?1006h');
+      move(TerminalMouseButton.left);
+      expect(output, isEmpty);
+
+      terminal.write('\x1b[?1002h');
+      move(TerminalMouseButton.left);
+      move(TerminalMouseButton.none);
+      expect(output, ['\x1b[<32;2;2M']);
+
+      output.clear();
+      terminal.write('\x1b[?1003h');
+      move(TerminalMouseButton.none);
+      expect(output, ['\x1b[<35;2;2M']);
+    });
+
     test('alternate scroll mode maps wheel to cursor keys in alt buffer', () {
       final output = <String>[];
       final terminal = Terminal(onOutput: output.add);
