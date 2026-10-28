@@ -2,6 +2,7 @@ import 'package:xterm/src/core/buffer/cell_offset.dart';
 import 'package:xterm/src/core/mouse/button_state.dart';
 import 'package:xterm/src/core/mouse/mode.dart';
 import 'package:xterm/src/core/mouse/button.dart';
+import 'package:xterm/src/core/mouse/modifiers.dart';
 import 'package:xterm/src/core/mouse/reporter.dart';
 import 'package:xterm/src/core/platform.dart';
 import 'package:xterm/src/core/state.dart';
@@ -22,12 +23,16 @@ class TerminalMouseEvent {
   /// The platform of the terminal.
   final TerminalTargetPlatform platform;
 
+  /// The keys held during the event.
+  final TerminalMouseModifiers modifiers;
+
   TerminalMouseEvent({
     required this.button,
     required this.buttonState,
     required this.position,
     required this.state,
     required this.platform,
+    this.modifiers = TerminalMouseModifiers.none,
   });
 }
 
@@ -75,6 +80,7 @@ class ClickMouseHandler implements TerminalMouseHandler {
             event.buttonState,
             event.position,
             event.state.mouseReportMode,
+            modifiers: event.modifiers,
           );
         }
         return null;
@@ -111,6 +117,7 @@ class UpDownMouseHandler implements TerminalMouseHandler {
           event.buttonState,
           event.position,
           event.state.mouseReportMode,
+          modifiers: event.modifiers,
         );
     }
   }
@@ -143,6 +150,7 @@ class MotionMouseHandler implements TerminalMouseHandler {
       event.buttonState,
       event.position,
       event.state.mouseReportMode,
+      modifiers: event.modifiers,
     );
   }
 }

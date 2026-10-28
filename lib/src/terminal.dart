@@ -15,6 +15,7 @@ import 'package:xterm/src/core/mouse/button.dart';
 import 'package:xterm/src/core/mouse/button_state.dart';
 import 'package:xterm/src/core/mouse/handler.dart';
 import 'package:xterm/src/core/mouse/mode.dart';
+import 'package:xterm/src/core/mouse/modifiers.dart';
 import 'package:xterm/src/core/platform.dart';
 import 'package:xterm/src/core/program_status.dart';
 import 'package:xterm/src/core/state.dart';
@@ -391,8 +392,9 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
   bool mouseInput(
     TerminalMouseButton button,
     TerminalMouseButtonState buttonState,
-    CellOffset position,
-  ) {
+    CellOffset position, {
+    TerminalMouseModifiers modifiers = TerminalMouseModifiers.none,
+  }) {
     if (position.x < 0 ||
         position.y < 0 ||
         position.x >= viewWidth ||
@@ -407,6 +409,7 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
         position: position,
         state: this,
         platform: platform,
+        modifiers: modifiers,
       ),
     );
     if (output != null) {

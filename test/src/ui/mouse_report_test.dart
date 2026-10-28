@@ -109,6 +109,141 @@ void main() {
     expect(harness.output.first, '\x1b[<0;1;${row + 1}M');
   });
 
+  testWidgets('a shift click is not reported', (tester) async {
+    final harness = await _pump(tester, '\x1b[?1049h\x1b[?1000h\x1b[?1006h');
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+    final gesture = await harness.press(2, 1);
+    await tester.pump(const Duration(milliseconds: 100));
+    await gesture.up();
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.pump(kDoubleTapTimeout);
+
+    expect(harness.output, isEmpty);
+  });
+
+  testWidgets('a right click on the selection stays with the host', (
+    tester,
+  ) async {
+    var secondaryTaps = 0;
+    final harness = await _pump(
+      tester,
+      '\x1b[?1000h\x1b[?1006halpha beta',
+      onSecondaryTapUp: () => secondaryTaps++,
+    );
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+    final drag = await harness.press(0, 0);
+    await drag.moveTo(harness.offsetOf(5, 0));
+    await tester.pump();
+    await drag.up();
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.pump(kDoubleTapTimeout);
+    expect(harness.selectedText, 'alpha');
+
+    final click = await harness.press(2, 0, buttons: kSecondaryMouseButton);
+    await click.up();
+    await tester.pump(kDoubleTapTimeout);
+
+    expect(harness.output, isEmpty);
+    expect(secondaryTaps, 1);
+    expect(harness.selectedText, 'alpha');
+  });
+
+  testWidgets('a right click on a selection handle does not grab it', (
+    tester,
+  ) async {
+    var secondaryTaps = 0;
+    final harness = await _pump(
+      tester,
+      'alpha beta',
+      onSecondaryTapUp: () => secondaryTaps++,
+    );
+
+    final drag = await harness.press(0, 0);
+    await drag.moveTo(harness.offsetOf(5, 0));
+    await tester.pump();
+    await drag.up();
+    await tester.pump(kDoubleTapTimeout);
+
+    final handle = find.descendant(
+      of: find.byType(TerminalView),
+      matching: find.byType(Positioned),
+    );
+    expect(handle, findsNWidgets(2));
+    final click = await tester.startGesture(
+      tester.getCenter(handle.last),
+      kind: PointerDeviceKind.mouse,
+      buttons: kSecondaryMouseButton,
+    );
+    await click.up();
+    await tester.pump(kDoubleTapTimeout);
+
+    expect(secondaryTaps, 1);
+    expect(harness.selectedText, 'alpha');
+  });
+
+  testWidgets('ctrl is carried in the report', (tester) async {
+    final harness = await _pump(tester, '\x1b[?1049h\x1b[?1000h\x1b[?1006h');
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+    final gesture = await harness.press(0, 0);
+    await gesture.up();
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+    await tester.pump(kDoubleTapTimeout);
+
+    expect(harness.output, ['\x1b[<16;1;1M', '\x1b[<16;1;1m']);
+  });
+
+  testWidgets('a drag released above the screen is still released', (
+    tester,
+  ) async {
+    final harness = await _pump(tester, '');
+    harness.terminal.write('line\r\n' * (harness.terminal.viewHeight * 2));
+    harness.terminal.write('\x1b[?1002h\x1b[?1006h');
+    await tester.pump();
+
+    final gesture = await harness.press(3, 2);
+    await gesture.moveTo(harness.offsetOf(3, 0) - const Offset(0, 40));
+    await tester.pump();
+    await gesture.up();
+    await tester.pump(kDoubleTapTimeout);
+
+    expect(harness.output, ['\x1b[<0;4;3M', '\x1b[<32;4;1M', '\x1b[<0;4;1m']);
+  });
+
+  testWidgets('a touch double tap sends no release without its press', (
+    tester,
+  ) async {
+    final harness = await _pump(tester, '\x1b[?1000h\x1b[?1006halpha beta');
+
+    for (var i = 0; i < 2; i++) {
+      final tap = await harness.press(1, 0, kind: PointerDeviceKind.touch);
+      await tap.up();
+      await tester.pump(kDoubleTapMinTime);
+    }
+    await tester.pump(kDoubleTapTimeout);
+
+    final presses = harness.output.where((o) => o.endsWith('M')).length;
+    final releases = harness.output.where((o) => o.endsWith('m')).length;
+    expect(releases, presses);
+  });
+
+  testWidgets('a touch while the button is held does not lose the release', (
+    tester,
+  ) async {
+    final harness = await _pump(tester, '\x1b[?1049h\x1b[?1002h\x1b[?1006h');
+
+    final mouse = await harness.press(1, 1);
+    final finger = await harness.press(8, 4, kind: PointerDeviceKind.touch);
+    await finger.up();
+    await mouse.up();
+    await tester.pump(kDoubleTapTimeout);
+
+    expect(harness.output.first, '\x1b[<0;2;2M');
+    expect(harness.output.last, '\x1b[<0;2;2m');
+  });
+
   testWidgets('alt drags out a rectangle', (tester) async {
     final harness = await _pump(tester, 'abcdef\r\nghijkl\r\nmnopqr');
 
@@ -134,14 +269,26 @@ void main() {
   });
 }
 
-Future<_Harness> _pump(WidgetTester tester, String content) async {
+Future<_Harness> _pump(
+  WidgetTester tester,
+  String content, {
+  VoidCallback? onSecondaryTapUp,
+}) async {
   final output = <String>[];
   final terminal = Terminal(maxLines: 64, onOutput: output.add);
   final controller = TerminalController();
 
   await tester.pumpWidget(
     MaterialApp(
-      home: Scaffold(body: TerminalView(terminal, controller: controller)),
+      home: Scaffold(
+        body: TerminalView(
+          terminal,
+          controller: controller,
+          onSecondaryTapUp: onSecondaryTapUp == null
+              ? null
+              : (_, _) => onSecondaryTapUp(),
+        ),
+      ),
     ),
   );
   await tester.pump();

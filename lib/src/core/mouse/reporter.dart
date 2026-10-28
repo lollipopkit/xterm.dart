@@ -2,20 +2,24 @@ import 'package:xterm/src/core/buffer/cell_offset.dart';
 import 'package:xterm/src/core/mouse/mode.dart';
 import 'package:xterm/src/core/mouse/button.dart';
 import 'package:xterm/src/core/mouse/button_state.dart';
+import 'package:xterm/src/core/mouse/modifiers.dart';
 
 abstract class MouseReporter {
   static String report(
     TerminalMouseButton button,
     TerminalMouseButtonState state,
     CellOffset position,
-    MouseReportMode reportMode,
-  ) {
+    MouseReportMode reportMode, {
+    TerminalMouseModifiers modifiers = TerminalMouseModifiers.none,
+  }) {
     // x and y offsets have to be incremented by 1 as the offset if 0-based,
     // The position has to be reported using 1-based coordinates.
     final x = position.x + 1;
     final y = position.y + 1;
-    // A move is reported as the button held during it, with bit 5 set.
-    final motion = state == TerminalMouseButtonState.motion ? 32 : 0;
+    // A move is reported as the button held during it, with bit 5 set, and
+    // the keys held set their own bits in every kind of report.
+    final motion =
+        (state == TerminalMouseButtonState.motion ? 32 : 0) + modifiers.bits;
     switch (reportMode) {
       case MouseReportMode.normal:
       case MouseReportMode.utf:
