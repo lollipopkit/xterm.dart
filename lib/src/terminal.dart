@@ -325,11 +325,11 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
       }
     }
 
+    // ESC and the character itself, as xterm's metaSendsEscape: Alt+a is
+    // ESC a and Alt+. is ESC ., which readline reads as M-a and M-.
     if (alt && platform != TerminalTargetPlatform.macos) {
-      if (charCode >= Ascii.a && charCode <= Ascii.z) {
-        final code = charCode - Ascii.a + 65;
-        final input = [0x1b, code];
-        onOutput?.call(String.fromCharCodes(input));
+      if (charCode >= Ascii.space && charCode != Ascii.DEL) {
+        onOutput?.call(String.fromCharCodes([Ascii.ESC, charCode]));
         return true;
       }
     }

@@ -158,6 +158,13 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
   bool _scrollUpdateScheduled = false;
   ValueListenable<bool>? _scrollActivityNotifier;
 
+  /// The end of the selection as the controller has it, one past the last
+  /// selected cell. [_selectedRange] ends on that cell instead, and holding
+  /// it still while the other end moves lost the cell from the selection.
+  CellOffset get _exclusiveSelectionEnd =>
+      widget.terminalController.selection?.normalized.end ??
+      _selectedRange!.normalized.end;
+
   bool get _isBlockSelection =>
       widget.terminalController.selectionMode == SelectionMode.block;
 
@@ -210,6 +217,7 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
         child: content,
         onTapUp: _unlessReported(onTapUp),
         onTapDown: _unlessReported(onTapDown),
+        onTapCancel: _onTapCancel,
         onSecondaryTapDown: _unlessReported(widget.onSecondaryTapDown),
         onSecondaryTapUp: _unlessReported(widget.onSecondaryTapUp),
         onTertiaryTapDown: _unlessReported(widget.onTertiaryTapDown),
@@ -265,6 +273,28 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
     return (details) {
       if (!_gestureIsReported) callback(details);
     };
+  }
+
+  /// A tap that turned into a long press or a drag. A touch press the program
+  /// was already told of is released, or it stays held there.
+  void _onTapCancel() {
+    if (_gestureIsReported) return;
+    _cancelPendingTapDown();
+    _releaseTapReportedButtons();
+  }
+
+  void _releaseTapReportedButtons() {
+    final position = _lastPointerDownPosition;
+    if (position != null) {
+      for (final button in _tapReportedButtons) {
+        renderTerminal.mouseEvent(
+          button,
+          TerminalMouseButtonState.up,
+          position,
+        );
+      }
+    }
+    _tapReportedButtons.clear();
   }
 
   /// A press handled here begins, unless a press the program took is still
@@ -862,7 +892,9 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
         target.y * 2 < begin.y + end.y ? end.y : begin.y,
       );
     } else {
-      anchor = target.isBefore(range.begin) ? range.end : range.begin;
+      anchor = target.isBefore(range.begin)
+          ? _exclusiveSelectionEnd
+          : range.begin;
     }
     _mouseSelectionBase = anchor;
     _isMouseSelectionInProgress = true;
@@ -1291,7 +1323,7 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
     _activeDragHandle = dragHandle;
     _isDragHandleReady = true;
     _dragHandleFixedPoint = dragHandle == _DragHandleType.start
-        ? range.end
+        ? _exclusiveSelectionEnd
         : range.begin;
 
     // Confirms the handle was found, before anything has moved.
@@ -1305,7 +1337,7 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
     final BufferRangeLine range = _selectedRange!.normalized;
     _activeDragHandle = dragHandle;
     _dragHandleFixedPoint = dragHandle == _DragHandleType.start
-        ? range.end
+        ? _exclusiveSelectionEnd
         : range.begin;
     _isDragHandleReady = false;
     _isDraggingHandle = true;
@@ -1517,6 +1549,7 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
   void onScaleStart(ScaleStartDetails details) {
     // Whatever this turns out to be, it is not the click being held back.
     _cancelPendingTapDown();
+    _releaseTapReportedButtons();
 
     _anchorMouseSelectionIfNeeded();
 
@@ -1543,7 +1576,7 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
       _isDraggingHandle = true;
       final BufferRangeLine range = _selectedRange!.normalized;
       _dragHandleFixedPoint = _activeDragHandle == _DragHandleType.start
-          ? range.end
+          ? _exclusiveSelectionEnd
           : range.begin;
       _longPressInitialCellOffset = null;
       if (widget.showToolbar) {
@@ -1682,6 +1715,7 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
   void _onLongPressStart(LongPressStartDetails details) {
     // This is a long press, not the click being held back.
     _cancelPendingTapDown();
+    _releaseTapReportedButtons();
 
     // A handle is armed, and a long press on one starts nothing: adjusting a
     // selection is what its handles are for. The release puts its menu up.

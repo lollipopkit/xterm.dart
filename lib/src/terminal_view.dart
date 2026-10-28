@@ -490,7 +490,14 @@ class TerminalViewState extends State<TerminalView>
         getSelectedText: () => renderTerminal.selectedText ?? '',
         onCopied: widget.onCopied,
         onSelectAll: widget.onSelectAll ?? () => renderTerminal.selectAll(),
-        onPaste: widget.onPaste,
+        // The clipboard goes to the terminal, as the paste shortcut sends it,
+        // and not into the text being composed, which held it until the
+        // next key went out with it.
+        onPaste:
+            widget.onPaste ??
+            (widget.readOnly
+                ? null
+                : () => pasteClipboard(widget.terminal, _controller)),
         child: child,
       );
     } else if (!widget.readOnly) {
@@ -730,13 +737,33 @@ class TerminalViewState extends State<TerminalView>
       return KeyEventResult.ignored;
     }
 
-    final handled = _sendTerminalKey(key);
+    final handled = _sendTerminalKey(key) || _sendAltCharacter(event);
 
     if (!handled) {
       return KeyEventResult.ignored;
     }
 
     return KeyEventResult.handled;
+  }
+
+  /// Alt with a key that types a character the keytab has no entry for, a
+  /// period for one: ESC and the character. Left alone it was typed without
+  /// the Alt. Not with Control, which AltGr on Windows is.
+  bool _sendAltCharacter(KeyEvent event) {
+    final keyboard = HardwareKeyboard.instance;
+    if (!keyboard.isAltPressed ||
+        keyboard.isControlPressed ||
+        keyboard.isMetaPressed) {
+      return false;
+    }
+    final character = event.character;
+    if (character == null || character.runes.length != 1) return false;
+    if (!widget.terminal.charInput(character.runes.single, alt: true)) {
+      return false;
+    }
+    _scrollToBottom();
+    _updateCursorBlink(resetVisible: true);
+    return true;
   }
 
   bool _sendTerminalKey(TerminalKey key) {
