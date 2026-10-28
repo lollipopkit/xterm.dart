@@ -8,10 +8,10 @@ import 'parser_test.mocks.dart';
 
 void main() {
   group('EscapeParser', () {
-    test('can parse window manipulation', () {
+    test('does not take a window size from the remote end', () {
       final parser = EscapeParser(MockEscapeHandler());
       parser.write('\x1b[8;24;80t');
-      verify(parser.handler.resize(80, 24));
+      verifyNever(parser.handler.resize(80, 24));
     });
 
     test('maps DA requests by prefix', () {
@@ -606,7 +606,7 @@ void main() {
       parser.write('\u009d2;title\u009c');
       parser.write('\u0090ignored\u009cZ');
 
-      verify(handler.resize(80, 24));
+      verifyNever(handler.resize(80, 24));
       verify(handler.setTitle('title'));
       verifyNever(handler.writeChar('i'.codeUnitAt(0)));
       verify(handler.writeChar('Z'.codeUnitAt(0))).called(1);
@@ -635,11 +635,11 @@ void main() {
       final handler = MockEscapeHandler();
       final parser = EscapeParser(handler);
 
-      parser.write('\u009b8;24');
-      verifyNever(handler.resize(any, any));
-      parser.write(';80t');
+      parser.write('\u009b5;1');
+      verifyNever(handler.setCursor(9, 4));
+      parser.write('0H');
 
-      verify(handler.resize(80, 24));
+      verify(handler.setCursor(9, 4));
     });
 
     test('handles multiple DEC private modes separately', () {

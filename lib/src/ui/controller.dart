@@ -12,7 +12,12 @@ import 'package:xterm/src/ui/selection_mode.dart';
 class TerminalController with ChangeNotifier {
   TerminalController({
     this._selectionMode = SelectionMode.line,
-    this._pointerInputs = const PointerInputs({PointerInput.tap}),
+    // Each is sent only when the program asks for it with a mouse mode.
+    this._pointerInputs = const PointerInputs({
+      PointerInput.tap,
+      PointerInput.drag,
+      PointerInput.move,
+    }),
     bool suspendPointerInput = false,
   }) : _suspendPointerInputs = suspendPointerInput;
 

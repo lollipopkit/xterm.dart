@@ -6,7 +6,6 @@ import 'package:material_ui/material_ui.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
-import 'package:xterm/src/ui/shortcut/shortcuts.dart';
 
 /// Builds customized context menu entries for the text selection toolbar.
 ///
@@ -233,9 +232,10 @@ class CustomTextEditState extends State<CustomTextEdit>
 
   @override
   Widget build(BuildContext context) {
-    return Shortcuts(
-      shortcuts: defaultTerminalShortcuts,
-      child: Actions(
+    // No shortcuts of its own: the view's, which the host can replace, reach
+    // these actions through [onKeyEvent], and a second set here took keys
+    // the host had left out of its map.
+    return Actions(
         actions: <Type, Action<Intent>>{
           CopySelectionTextIntent: CallbackAction<CopySelectionTextIntent>(
             onInvoke: (intent) {
@@ -250,12 +250,11 @@ class CustomTextEditState extends State<CustomTextEdit>
             onInvoke: (intent) => selectAll(intent.cause),
           ),
         },
-        child: Focus(
-          focusNode: widget.focusNode,
-          autofocus: widget.autofocus,
-          onKeyEvent: _onKeyEvent,
-          child: widget.child,
-        ),
+      child: Focus(
+        focusNode: widget.focusNode,
+        autofocus: widget.autofocus,
+        onKeyEvent: _onKeyEvent,
+        child: widget.child,
       ),
     );
   }
@@ -880,7 +879,7 @@ class CustomTextEditState extends State<CustomTextEdit>
   }
 
   @override
-  bool get pasteEnabled => widget.onPaste != null || !widget.readOnly;
+  bool get pasteEnabled => widget.onPaste != null;
 
   @override
   bool get cutEnabled => false;
@@ -940,45 +939,16 @@ class CustomTextEditState extends State<CustomTextEdit>
       hideToolbar();
     }
 
-    if (widget.onPaste != null) {
-      widget.onPaste!();
-      return;
-    }
-    
-    // The clipboard can refuse a read as it can a write (see [copySelection]),
-    // and the answer can come after this edit is gone: neither is anyone's to
-    // be told about, and a gone one has no state to set.
-    final ClipboardData? data;
-    try {
-      data = await Clipboard.getData(Clipboard.kTextPlain);
-    } on PlatformException {
-      return;
-    }
-    if (!mounted || data == null || data.text == null) {
-      return;
-    }
-    final text = _currentEditingState.text;
-    // An editing value with no selection (offsets of -1) has no before or
-    // after to split at; the paste goes at the end (SERVERBOX-1AL).
-    final selection = _currentEditingState.selection.isValid
-        ? _currentEditingState.selection
-        : TextSelection.collapsed(offset: text.length);
-    final newText =
-        selection.textBefore(text) + data.text! + selection.textAfter(text);
-    textEditingValue = TextEditingValue(
-      text: newText,
-      selection: TextSelection.collapsed(
-        offset: selection.start + data.text!.length,
-      ),
-    );
-    _showCaretOnScreen();
+    widget.onPaste?.call();
   }
 
   @override
   void selectAll(SelectionChangedCause cause) {
     if (widget.onSelectAll != null) {
       widget.onSelectAll!();
-      _menuController.markNeedsBuild();
+      // A keyboard select-all has no menu up to rebuild, and asking one that
+      // is not shown asserts.
+      if (_menuController.isShown) _menuController.markNeedsBuild();
       setState(() {});
     } else if (!widget.readOnly && _currentEditingState.text.isNotEmpty) {
       textEditingValue = _currentEditingState.copyWith(

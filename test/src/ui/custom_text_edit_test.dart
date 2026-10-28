@@ -163,6 +163,7 @@ Future<CustomTextEditState> _pumpEdit(
   void Function()? onCopied,
   String Function()? getSelectedText,
   bool Function()? hasSelection,
+  void Function()? onPaste,
 }) async {
   final focusNode = FocusNode();
   addTearDown(focusNode.dispose);
@@ -179,6 +180,7 @@ Future<CustomTextEditState> _pumpEdit(
           onCopied: onCopied,
           getSelectedText: getSelectedText,
           hasSelection: hasSelection,
+          onPaste: onPaste,
           child: const SizedBox.shrink(),
         ),
       ),
@@ -213,21 +215,15 @@ void _richContentAndClipboard() {
     expect(inserted, ['ls -la']);
   });
 
-  testWidgets('a paste with no selection goes at the end', (tester) async {
-    // SERVERBOX-1AL: offsets of -1 have nothing to split at.
-    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
-      SystemChannels.platform,
-      (call) async => call.method == 'Clipboard.getData'
-          ? <String, dynamic>{'text': 'pwd'}
-          : null,
+  testWidgets('a paste goes to onPaste and leaves the composing text', (
+    tester,
+  ) async {
+    var pastes = 0;
+    final state = await _pumpEdit(
+      tester,
+      onInsert: (_) {},
+      onPaste: () => pastes++,
     );
-    addTearDown(
-      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
-        SystemChannels.platform,
-        null,
-      ),
-    );
-    final state = await _pumpEdit(tester, onInsert: (_) {});
     state.textEditingValue = const TextEditingValue(
       text: 'ab',
       selection: TextSelection.collapsed(offset: -1),
@@ -235,7 +231,8 @@ void _richContentAndClipboard() {
 
     await state.pasteText(SelectionChangedCause.keyboard);
 
-    expect(state.textEditingValue.text, endsWith('pwd'));
+    expect(pastes, 1);
+    expect(state.textEditingValue.text, 'ab');
   });
 
   testWidgets('a clipboard that refuses a copy is not reported', (

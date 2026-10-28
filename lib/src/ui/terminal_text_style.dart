@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 
 const _kDefaultFontSize = 13.0;
@@ -109,4 +110,24 @@ class TerminalStyle {
       letterSpacing: letterSpacing ?? this.letterSpacing,
     );
   }
+
+  // By value: the view builds a new one every frame, and the painter drops
+  // its glyph caches whenever the one it is given is a different style.
+  @override
+  bool operator ==(Object other) =>
+      other is TerminalStyle &&
+      other.fontSize == fontSize &&
+      other.height == height &&
+      other.fontFamily == fontFamily &&
+      listEquals(other.fontFamilyFallback, fontFamilyFallback) &&
+      other.letterSpacing == letterSpacing;
+
+  @override
+  int get hashCode => Object.hash(
+    fontSize,
+    height,
+    fontFamily,
+    Object.hashAll(fontFamilyFallback),
+    letterSpacing,
+  );
 }

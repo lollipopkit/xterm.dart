@@ -23,15 +23,7 @@ class TerminalActions extends StatelessWidget {
     return Actions(
       actions: {
         PasteTextIntent: CallbackAction<PasteTextIntent>(
-          onInvoke: (intent) async {
-            final data = await Clipboard.getData(Clipboard.kTextPlain);
-            final text = data?.text;
-            if (text != null) {
-              terminal.paste(text);
-              controller.clearSelection();
-            }
-            return null;
-          },
+          onInvoke: (intent) => pasteClipboard(terminal, controller),
         ),
         CopySelectionTextIntent: CallbackAction<CopySelectionTextIntent>(
           onInvoke: (intent) async {
@@ -68,4 +60,22 @@ class TerminalActions extends StatelessWidget {
       child: child,
     );
   }
+}
+
+/// Pastes the clipboard's text into [terminal], as a paste, so that bracketed
+/// paste wraps it. The clipboard can refuse a read, which no one is told of.
+Future<void> pasteClipboard(
+  Terminal terminal,
+  TerminalController controller,
+) async {
+  final ClipboardData? data;
+  try {
+    data = await Clipboard.getData(Clipboard.kTextPlain);
+  } on PlatformException {
+    return;
+  }
+  final text = data?.text;
+  if (text == null || text.isEmpty) return;
+  terminal.paste(text);
+  controller.clearSelection();
 }

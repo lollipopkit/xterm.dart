@@ -22,10 +22,10 @@ final Map<ShortcutActivator, Intent> _defaultShortcuts = {
       const PasteTextIntent(SelectionChangedCause.keyboard),
   SingleActivator(LogicalKeyboardKey.keyV, control: true, shift: true):
       const PasteTextIntent(SelectionChangedCause.keyboard),
-  SingleActivator(LogicalKeyboardKey.keyA, control: true):
+  // With shift: Ctrl+A and Ctrl+X are the shell's, readline's start of line
+  // and nano's exit, tmux and screen's prefix.
+  SingleActivator(LogicalKeyboardKey.keyA, control: true, shift: true):
       const SelectAllTextIntent(SelectionChangedCause.keyboard),
-  SingleActivator(LogicalKeyboardKey.keyX, control: true):
-      CopySelectionTextIntent.cut(SelectionChangedCause.keyboard),
   SingleActivator(LogicalKeyboardKey.insert, control: true):
       CopySelectionTextIntent.copy,
   SingleActivator(LogicalKeyboardKey.insert, shift: true):

@@ -50,6 +50,12 @@ class Buffer {
 
   final _savedCursorStyle = CursorStyle();
 
+  /// The modes DECSC saves with the cursor. Each screen has its own, like the
+  /// cursor itself.
+  var savedOriginMode = false;
+
+  var savedAutoWrapMode = true;
+
   final charset = Charset();
 
   /// Width of the viewport in columns. Also the index of the last column.
@@ -341,6 +347,8 @@ class Buffer {
   /// Erases the line from the cursor to the end of the line, including the
   /// cursor position.
   void eraseLineFromCursor() {
+    // From the last column when a wrap is pending, as xterm does.
+    _clearPendingWrap();
     currentLine.isWrapped = false;
     currentLine.eraseRange(_cursorX, viewWidth, terminal.cursor);
   }
@@ -360,6 +368,7 @@ class Buffer {
 
   /// Erases [count] cells starting at the cursor position.
   void eraseChars(int count) {
+    _clearPendingWrap();
     if (count <= 0) {
       return;
     }
@@ -418,16 +427,9 @@ class Buffer {
       return;
     }
 
-    // the cursor is not in the scrollable region
-    if (_cursorY >= viewHeight - 1) {
-      // we are at the bottom
-      if (isAltBuffer) {
-        scrollUp(1);
-      } else {
-        lines.push(_newEmptyLine());
-      }
-    } else {
-      // there're still lines so we simply move cursor down.
+    // Outside the scroll region, which is then not the whole screen: nothing
+    // scrolls, and at the last row the cursor stays put.
+    if (_cursorY < viewHeight - 1) {
       moveCursorY(1);
     }
   }
@@ -499,9 +501,13 @@ class Buffer {
     final cursorY = _cursorY + offset;
     if (terminal.originMode) {
       _cursorY = cursorY.clamp(_marginTop, _marginBottom);
-    } else {
-      setCursorY(cursorY);
+      return;
     }
+    // A margin stops the cursor from the side it is on, as in xterm: one
+    // within the region stays within it, and one outside crosses nothing.
+    final top = _cursorY < _marginTop ? 0 : _marginTop;
+    final bottom = _cursorY > _marginBottom ? viewHeight - 1 : _marginBottom;
+    _cursorY = cursorY.clamp(top, bottom);
   }
 
   void setCursor(int cursorX, int cursorY) {
@@ -528,6 +534,8 @@ class Buffer {
     _savedCursorStyle.foreground = terminal.cursor.foreground;
     _savedCursorStyle.background = terminal.cursor.background;
     _savedCursorStyle.attrs = terminal.cursor.attrs;
+    savedOriginMode = terminal.originMode;
+    savedAutoWrapMode = terminal.autoWrapMode;
     charset.save();
   }
 
@@ -560,6 +568,7 @@ class Buffer {
   }
 
   void deleteChars(int count) {
+    _clearPendingWrap();
     if (count <= 0) {
       return;
     }
@@ -595,6 +604,10 @@ class Buffer {
         line.setCell(x, codePoint, 1, terminal.cursor);
       }
     }
+    // And, as in xterm, the margins reset and the cursor home.
+    resetVerticalMargins();
+    _cursorX = 0;
+    _cursorY = 0;
   }
 
   /// Soft-resets state associated with this buffer without clearing content.
@@ -605,6 +618,8 @@ class Buffer {
     _savedCursorX = 0;
     _savedCursorY = 0;
     _savedCursorStyle.reset();
+    savedOriginMode = false;
+    savedAutoWrapMode = true;
     charset.reset();
   }
 
@@ -615,6 +630,7 @@ class Buffer {
   }
 
   void insertBlankChars(int count) {
+    _clearPendingWrap();
     if (count <= 0) {
       return;
     }
@@ -704,12 +720,17 @@ class Buffer {
     }
 
     // Ensure cursor is within the screen.
-    _cursorX = _cursorX.clamp(0, newWidth - 1);
     _cursorY = _cursorY.clamp(0, newHeight - 1);
 
     // 2. Adjust the width.
     if (newWidth != oldWidth) {
       if (terminal.reflowEnabled && !isAltBuffer) {
+        // The cursor goes where the text it is in goes. `viewHeight` is still
+        // the old height here, so the screen's top is worked out by hand.
+        final cursor = lines[_cursorY + lines.length - newHeight].createAnchor(
+          _cursorX,
+        );
+
         final reflowResult = reflow(lines, oldWidth, newWidth);
 
         while (reflowResult.length < newHeight) {
@@ -717,10 +738,21 @@ class Buffer {
         }
 
         lines.replaceWith(reflowResult);
+
+        if (cursor.attached) {
+          _cursorX = cursor.x;
+          _cursorY = (cursor.y - (lines.length - newHeight)).clamp(
+            0,
+            newHeight - 1,
+          );
+        }
+        cursor.dispose();
       } else {
-        lines.forEach((item) => item.resize(newWidth));
+        lines.forEach((item) => item.resize(newWidth, keepHidden: true));
       }
     }
+
+    _cursorX = _cursorX.clamp(0, newWidth - 1);
   }
 
   /// Create a new [CellAnchor] at the specified [x] and [y] coordinates.
@@ -774,12 +806,21 @@ class Buffer {
     var start = position.x;
     var end = position.x;
 
+    // The second column of a wide character holds no code point, which reads
+    // as 0, a separator; it is part of the character to its left.
+    bool isSeparator(int x) {
+      final char = line.getCodePoint(x);
+      if (char == 0 && x > 0 && line.getWidth(x - 1) == 2) {
+        return separators.contains(line.getCodePoint(x - 1));
+      }
+      return separators.contains(char);
+    }
+
     do {
       if (start == 0) {
         break;
       }
-      final char = line.getCodePoint(start - 1);
-      if (separators.contains(char)) {
+      if (isSeparator(start - 1)) {
         break;
       }
       start--;
@@ -789,8 +830,7 @@ class Buffer {
       if (end >= viewWidth) {
         break;
       }
-      final char = line.getCodePoint(end);
-      if (separators.contains(char)) {
+      if (isSeparator(end)) {
         break;
       }
       end++;
@@ -819,9 +859,10 @@ class Buffer {
   /// only the end of the last of them is trimmed, so a line that wrapped on a
   /// space keeps it.
   String getText([BufferRange? range]) {
+    // The end is exclusive, so the last column is `viewWidth`.
     range ??= BufferRangeLine(
       CellOffset(0, 0),
-      CellOffset(viewWidth - 1, height - 1),
+      CellOffset(viewWidth, height - 1),
     );
 
     range = range.normalized;
@@ -841,7 +882,8 @@ class Buffer {
         continue;
       }
       final line = lines[segment.line];
-      if (started && !line.isWrapped) {
+      // A block is its rows, each on its own, whether or not they wrapped.
+      if (started && (!trimRight || !line.isWrapped)) {
         builder.write("\n");
       }
       started = true;

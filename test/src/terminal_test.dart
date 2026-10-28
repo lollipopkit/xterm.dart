@@ -73,6 +73,18 @@ void main() {
   });
 
   group('Terminal.charInput', () {
+    test('alt sends ESC and the character, lower case for a letter', () {
+      final out = <String>[];
+      final t = Terminal(
+        platform: TerminalTargetPlatform.linux,
+        onOutput: out.add,
+      );
+      t.keyInput(TerminalKey.keyA, alt: true);
+      t.charInput('b'.codeUnitAt(0), alt: true);
+      t.charInput('.'.codeUnitAt(0), alt: true);
+      expect(out, ['\x1ba', '\x1bb', '\x1b.']);
+    });
+
     test('ctrl maps uppercase and lowercase letters to C0 controls', () {
       final output = <String>[];
       final terminal = Terminal(onOutput: output.add);
@@ -83,6 +95,21 @@ void main() {
       expect(terminal.charInput('z'.codeUnitAt(0), ctrl: true), isTrue);
 
       expect(output, ['\x01', '\x01', '\x1a', '\x1a']);
+    });
+  });
+
+  group('Terminal.keyInput', () {
+    test('arrows carry the modifiers held', () {
+      final out = <String>[];
+      final t = Terminal(
+        platform: TerminalTargetPlatform.linux,
+        onOutput: out.add,
+      );
+      t.keyInput(TerminalKey.arrowUp, shift: true);
+      t.keyInput(TerminalKey.arrowUp, alt: true);
+      t.keyInput(TerminalKey.arrowUp, ctrl: true);
+      t.keyInput(TerminalKey.arrowDown, ctrl: true, alt: true);
+      expect(out, ['\x1b[1;2A', '\x1b[1;3A', '\x1b[1;5A', '\x1b[1;7B']);
     });
   });
 
@@ -131,6 +158,33 @@ void main() {
       );
 
       expect(output, ['\x1B[M ++']);
+    });
+
+    test('reports a move with a button held from mode 1002 on', () {
+      final output = <String>[];
+      final terminal = Terminal(onOutput: output.add);
+
+      void move(TerminalMouseButton button) {
+        terminal.mouseInput(
+          button,
+          TerminalMouseButtonState.motion,
+          CellOffset(1, 1),
+        );
+      }
+
+      terminal.write('\x1b[?1000h\x1b[?1006h');
+      move(TerminalMouseButton.left);
+      expect(output, isEmpty);
+
+      terminal.write('\x1b[?1002h');
+      move(TerminalMouseButton.left);
+      move(TerminalMouseButton.none);
+      expect(output, ['\x1b[<32;2;2M']);
+
+      output.clear();
+      terminal.write('\x1b[?1003h');
+      move(TerminalMouseButton.none);
+      expect(output, ['\x1b[<35;2;2M']);
     });
 
     test('alternate scroll mode maps wheel to cursor keys in alt buffer', () {
@@ -424,21 +478,17 @@ void main() {
       expect(terminal.reverseDisplayMode, isFalse);
     });
 
-    test('DECCOLM switches between 80 and 132 columns and clears screen', () {
+    test('DECCOLM is ignored, so reset keeps the width and the screen', () {
       final terminal = Terminal();
       terminal.resize(10, 3);
 
       terminal.write('abc\x1b[?3h');
-      expect(terminal.viewWidth, 132);
-      expect(terminal.buffer.cursorX, 0);
-      expect(terminal.buffer.cursorY, 0);
-      expect(terminal.buffer.lines[0].getText(), isEmpty);
+      expect(terminal.viewWidth, 10);
+      expect(terminal.buffer.lines[0].getText(), 'abc');
 
-      terminal.write('X\x1b[?3l');
-      expect(terminal.viewWidth, 80);
-      expect(terminal.buffer.cursorX, 0);
-      expect(terminal.buffer.cursorY, 0);
-      expect(terminal.buffer.lines[0].getText(), isEmpty);
+      terminal.write('\x1b[?3l');
+      expect(terminal.viewWidth, 10);
+      expect(terminal.buffer.lines[0].getText(), 'abc');
     });
   });
 
@@ -593,13 +643,15 @@ void main() {
   });
 
   group('Terminal.deleteChars', () {
-    test('DCH is a no-op in pending-wrap column', () {
+    test('DCH in the pending-wrap column deletes the last cell', () {
+      // As xterm and xterm.js do: the pending wrap is dropped and the cursor
+      // is on the last column.
       final terminal = Terminal();
       terminal.resize(4, 2);
 
       terminal.write('abcd\x1b[P');
 
-      expect(terminal.buffer.lines[0].getText(), 'abcd');
+      expect(terminal.buffer.lines[0].getText().trimRight(), 'abc');
       expect(terminal.buffer.cursorX, 3);
       expect(terminal.buffer.cursorY, 0);
     });
@@ -954,13 +1006,15 @@ void main() {
       expect(lastData, ['world']);
     });
 
-    test('OSC does not terminate on ESC without backslash', () {
+    test('ESC without backslash ends an OSC and starts its own sequence', () {
       String? title;
       final terminal = Terminal(onTitleChange: (value) => title = value);
 
-      terminal.write('\x1b]2;hello\x1bXworld\x07');
+      terminal.write('\x1b]2;hello\x1b[31mRED\x07after');
 
-      expect(title, 'hello\x1bXworld');
+      expect(title, 'hello');
+      expect(terminal.buffer.lines[0].getText().trimRight(), 'REDafter');
+      expect(terminal.cursor.foreground, isNot(0));
     });
 
     test('common OSC preserves semicolons in payload', () {

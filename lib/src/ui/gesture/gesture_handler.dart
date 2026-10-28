@@ -82,6 +82,27 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
   bool _mouseTapDownDispatched = false;
   Offset? _mouseSelectionLastPosition;
 
+  /// Whether the selection being dragged out is a rectangle, which is what
+  /// alt held as the button went down asks for.
+  bool _blockSelection = false;
+
+  // A mouse press the program in the terminal takes, by having a mouse mode
+  // on: its presses, drags and releases go to the program and nothing here
+  // acts on them. Shift held, or a press on the selection or the scrollback,
+  // stays here, as in every terminal. See [_reportsPress].
+  int? _reportedPointer;
+  int _reportedButtons = 0;
+  CellOffset? _lastReportedCell;
+
+  /// Whether the gesture callbacks now arriving belong to a press the
+  /// program took. Kept past the release, since the tap and drag callbacks
+  /// arrive after it, until a press handled here begins.
+  bool _gestureIsReported = false;
+
+  /// The buttons whose press a touch tap reported, so that a release is
+  /// only sent for a press the program saw.
+  final Set<TerminalMouseButton> _tapReportedButtons = {};
+
   // Held back so that a long press or a drag beginning at the same point is
   // seen first, and the terminal is not told about a click that turned out to
   // be the start of something else.
@@ -137,8 +158,21 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
   bool _scrollUpdateScheduled = false;
   ValueListenable<bool>? _scrollActivityNotifier;
 
+  /// The end of the selection as the controller has it, one past the last
+  /// selected cell. [_selectedRange] ends on that cell instead, and holding
+  /// it still while the other end moves lost the cell from the selection.
+  CellOffset get _exclusiveSelectionEnd =>
+      widget.terminalController.selection?.normalized.end ??
+      _selectedRange!.normalized.end;
+
+  bool get _isBlockSelection =>
+      widget.terminalController.selectionMode == SelectionMode.block;
+
+  // A rectangle is a mouse's, and its corners are not where a handle on a
+  // run of text would go.
   bool get _shouldShowHandles =>
       widget.showToolbar &&
+      !_isBlockSelection &&
       _selectedRange != null &&
       !_selectedRange!.isCollapsed;
 
@@ -170,23 +204,32 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
     return Listener(
       behavior: HitTestBehavior.deferToChild,
       onPointerDown: _onPointerDown,
+      onPointerMove: _onReportedPointerEvent,
+      onPointerUp: _onReportedPointerEvent,
+      onPointerCancel: _onReportedPointerEvent,
+      onPointerHover: _onPointerHover,
+      // A trackpad pinch has no pointer-down to begin a gesture with.
+      onPointerPanZoomStart: (_) => _beginLocalGesture(),
+      // Every callback goes through [_unlessReported], so that none of them
+      // acts on a press the program took.
       child: GestureDetector(
         behavior: HitTestBehavior.deferToChild,
         child: content,
-        onTapUp: onTapUp,
-        onTapDown: onTapDown,
-        onSecondaryTapDown: onSecondaryTapDown,
-        onSecondaryTapUp: onSecondaryTapUp,
-        onTertiaryTapDown: widget.onTertiaryTapDown,
-        onTertiaryTapUp: widget.onTertiaryTapUp,
+        onTapUp: _unlessReported(onTapUp),
+        onTapDown: _unlessReported(onTapDown),
+        onTapCancel: _onTapCancel,
+        onSecondaryTapDown: _unlessReported(widget.onSecondaryTapDown),
+        onSecondaryTapUp: _unlessReported(widget.onSecondaryTapUp),
+        onTertiaryTapDown: _unlessReported(widget.onTertiaryTapDown),
+        onTertiaryTapUp: _unlessReported(widget.onTertiaryTapUp),
         // No `onDoubleTapDown`. Registering a double tap takes the second tap
         // out of `onTapDown`, and then a third one looks like a second.
-        onScaleEnd: onScaleEnd,
-        onScaleStart: onScaleStart,
-        onScaleUpdate: onScaleUpdate,
-        onLongPressStart: _onLongPressStart,
-        onLongPressMoveUpdate: _onLongPressMoveUpdate,
-        onLongPressEnd: _onLongPressEnd,
+        onScaleEnd: _unlessReported(onScaleEnd),
+        onScaleStart: _unlessReported(onScaleStart),
+        onScaleUpdate: _unlessReported(onScaleUpdate),
+        onLongPressStart: _unlessReported(_onLongPressStart),
+        onLongPressMoveUpdate: _unlessReported(_onLongPressMoveUpdate),
+        onLongPressEnd: _unlessReported(_onLongPressEnd),
       ),
     );
   }
@@ -223,6 +266,44 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
   bool get _shouldSendTapEvent =>
       !widget.readOnly &&
       widget.terminalController.shouldSendPointerInput(PointerInput.tap);
+
+  /// [callback], or null-safe nothing while the gesture is the program's.
+  void Function(T)? _unlessReported<T>(void Function(T)? callback) {
+    if (callback == null) return null;
+    return (details) {
+      if (!_gestureIsReported) callback(details);
+    };
+  }
+
+  /// A tap that turned into a long press or a drag. A touch press the program
+  /// was already told of is released, or it stays held there.
+  void _onTapCancel() {
+    if (_gestureIsReported) return;
+    _cancelPendingTapDown();
+    _releaseTapReportedButtons();
+  }
+
+  void _releaseTapReportedButtons() {
+    final position = _lastPointerDownPosition;
+    if (position != null) {
+      for (final button in _tapReportedButtons) {
+        renderTerminal.mouseEvent(
+          button,
+          TerminalMouseButtonState.up,
+          position,
+        );
+      }
+    }
+    _tapReportedButtons.clear();
+  }
+
+  /// A press handled here begins, unless a press the program took is still
+  /// held, whose gesture this would cut short.
+  void _beginLocalGesture() {
+    if (_reportedPointer == null) {
+      _gestureIsReported = false;
+    }
+  }
 
   /// Drops a tap-down that was being held back, so it never reaches the
   /// terminal.
@@ -366,6 +447,8 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
       child: Listener(
         behavior: HitTestBehavior.translucent,
         onPointerDown: (PointerDownEvent event) {
+          // A right click on a handle is still a right click on the selection.
+          if (event.buttons != kPrimaryButton) return;
           _beginHandleDrag(dragType);
           _updateHandleDragFromGlobal(event.position);
         },
@@ -422,6 +505,12 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
     if (selection is BufferRangeLine) {
       return _inclusiveControllerRange(selection);
     }
+    // Its corners as they were set, so that a click elsewhere still finds a
+    // selection to drop and a shift-click grows it from the far corner.
+    if (selection is BufferRangeBlock && !selection.isCollapsed) {
+      final block = selection.normalized;
+      return BufferRangeLine(block.begin, block.end);
+    }
     if (selection.isCollapsed) {
       return BufferRangeLine(selection.begin, selection.begin);
     }
@@ -458,7 +547,7 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
   /// The selection handle under [localPosition], or none.
   _DragHandleType _detectDragHandle(Offset localPosition) {
     final BufferRangeLine? range = _selectedRange;
-    if (range == null || range.isCollapsed) {
+    if (range == null || range.isCollapsed || _isBlockSelection) {
       return _DragHandleType.none;
     }
 
@@ -583,6 +672,28 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
   /// and how the second click of a double click went uncounted when the
   /// drag began on it.
   void _onPointerDown(PointerDownEvent event) {
+    if (_reportsPress(event)) {
+      _reportedPointer = event.pointer;
+      _gestureIsReported = true;
+      _cancelPendingTapDown();
+      if (_selectedRange != null) {
+        _clearSelection();
+      }
+      _reportedButtons = 0;
+      _reportPointer(event);
+      // Focus, which the press would have given had it stayed here.
+      widget.onTapDown?.call(
+        TapDownDetails(
+          globalPosition: event.position,
+          localPosition: renderTerminal.globalToLocal(event.position),
+          kind: event.kind,
+        ),
+      );
+      return;
+    }
+    _beginLocalGesture();
+    if (_gestureIsReported) return;
+
     _lastPointerDownKind = event.kind;
     _lastPointerDownPosition = renderTerminal.globalToLocal(event.position);
 
@@ -591,6 +702,107 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
     _suppressNextTapUp = false;
 
     _countTap(_lastPointerDownPosition!);
+  }
+
+  /// Whether a mouse event at [event] goes to the program: a mouse mode is
+  /// on, shift is not held, and the pointer is on the screen and not on the
+  /// selection. Touch is reported by the tap path instead.
+  bool _reportsPointerAt(PointerEvent event) {
+    if (event.kind != PointerDeviceKind.mouse ||
+        !_shouldSendTapEvent ||
+        terminalView.widget.terminal.mouseMode == MouseMode.none ||
+        HardwareKeyboard.instance.isShiftPressed) {
+      return false;
+    }
+    final local = renderTerminal.globalToLocal(event.position);
+    return renderTerminal.getScreenCellOffset(local).y >= 0 &&
+        !_isNearSelection(local);
+  }
+
+  bool _reportsPress(PointerDownEvent event) =>
+      _reportedPointer == null && _reportsPointerAt(event);
+
+  void _onReportedPointerEvent(PointerEvent event) {
+    if (event.pointer != _reportedPointer) return;
+    _reportPointer(event);
+    if (event is PointerUpEvent || event is PointerCancelEvent) {
+      _reportedPointer = null;
+    }
+  }
+
+  void _onPointerHover(PointerHoverEvent event) {
+    if (terminalView.widget.terminal.mouseMode != MouseMode.upDownScrollMove ||
+        !widget.terminalController.shouldSendPointerInput(PointerInput.move) ||
+        !_reportsPointerAt(event)) {
+      return;
+    }
+    _reportedButtons = 0;
+    _reportPointer(event);
+  }
+
+  static const _reportedButtonBits = <(int, TerminalMouseButton)>[
+    (kPrimaryMouseButton, TerminalMouseButton.left),
+    (kMiddleMouseButton, TerminalMouseButton.middle),
+    (kSecondaryMouseButton, TerminalMouseButton.right),
+  ];
+
+  /// Tells the program what changed since the last event of this pointer:
+  /// each button that went down or up, then, if none did, a move to another
+  /// cell, which the program's mouse mode decides whether to report.
+  void _reportPointer(PointerEvent event) {
+    final terminal = terminalView.widget.terminal;
+    final local = renderTerminal.globalToLocal(event.position);
+    final buttons = event is PointerUpEvent || event is PointerCancelEvent
+        ? 0
+        : event.buttons;
+    // Kept on the screen: a drag that leaves it still ends somewhere the
+    // program can be told about, release included.
+    final screen = renderTerminal.getScreenCellOffset(local);
+    final cell = CellOffset(screen.x, screen.y.clamp(0, terminal.viewHeight - 1));
+    final keyboard = HardwareKeyboard.instance;
+    final modifiers = TerminalMouseModifiers(
+      shift: keyboard.isShiftPressed,
+      alt: keyboard.isAltPressed,
+      ctrl: keyboard.isControlPressed,
+    );
+
+    if (buttons != _reportedButtons) {
+      for (final (bit, button) in _reportedButtonBits) {
+        final wasDown = _reportedButtons & bit != 0;
+        final isDown = buttons & bit != 0;
+        if (wasDown != isDown) {
+          terminal.mouseInput(
+            button,
+            isDown ? TerminalMouseButtonState.down : TerminalMouseButtonState.up,
+            cell,
+            modifiers: modifiers,
+          );
+        }
+      }
+      _reportedButtons = buttons;
+      _lastReportedCell = cell;
+      return;
+    }
+
+    if (cell == _lastReportedCell) {
+      return;
+    }
+    _lastReportedCell = cell;
+
+    final held = _reportedButtonBits
+        .where((entry) => buttons & entry.$1 != 0)
+        .map((entry) => entry.$2)
+        .firstOrNull;
+    if (held != null &&
+        !widget.terminalController.shouldSendPointerInput(PointerInput.drag)) {
+      return;
+    }
+    terminal.mouseInput(
+      held ?? TerminalMouseButton.none,
+      TerminalMouseButtonState.motion,
+      cell,
+      modifiers: modifiers,
+    );
   }
 
   /// Counts this pointer-down into the run of taps at the same place, and
@@ -633,13 +845,6 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
     }
   }
 
-  bool get _isShiftPressed {
-    final pressed = HardwareKeyboard.instance.logicalKeysPressed;
-    return pressed.contains(LogicalKeyboardKey.shiftLeft) ||
-        pressed.contains(LogicalKeyboardKey.shiftRight) ||
-        pressed.contains(LogicalKeyboardKey.shift);
-  }
-
   /// The selection from [base] to [current], grown at both ends to whole
   /// words or whole lines when that is what the drag is taking.
   ///
@@ -676,7 +881,21 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
       return;
     }
 
-    final anchor = target.isBefore(range.begin) ? range.end : range.begin;
+    final CellOffset anchor;
+    if (_blockSelection) {
+      // A rectangle keeps the corner across from the pointer, along each
+      // side on its own.
+      final begin = range.begin;
+      final end = range.end;
+      anchor = CellOffset(
+        target.x * 2 < begin.x + end.x ? end.x : begin.x,
+        target.y * 2 < begin.y + end.y ? end.y : begin.y,
+      );
+    } else {
+      anchor = target.isBefore(range.begin)
+          ? _exclusiveSelectionEnd
+          : range.begin;
+    }
     _mouseSelectionBase = anchor;
     _isMouseSelectionInProgress = true;
     _applySelection(_rangeFor(anchor, target));
@@ -769,12 +988,16 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
     bool forceCallback = false,
   }) {
     var handled = false;
-    if (_shouldSendTapEvent && !_isNearSelection(details.localPosition)) {
+    // A mouse is reported by [_reportPointer], from the pointer itself.
+    if (details.kind != PointerDeviceKind.mouse &&
+        _shouldSendTapEvent &&
+        !_isNearSelection(details.localPosition)) {
       handled = renderTerminal.mouseEvent(
         button,
         TerminalMouseButtonState.down,
         details.localPosition,
       );
+      if (handled) _tapReportedButtons.add(button);
     }
     if (!handled || forceCallback) {
       callback?.call(details);
@@ -788,7 +1011,7 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
     bool forceCallback = false,
   }) {
     var handled = false;
-    if (_shouldSendTapEvent && !_isNearSelection(details.localPosition)) {
+    if (_tapReportedButtons.remove(button)) {
       handled = renderTerminal.mouseEvent(
         button,
         TerminalMouseButtonState.up,
@@ -804,8 +1027,7 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
     if (!_isMouseDeviceDown ||
         !_isPointerKindMouse(_mousePointerKind) ||
         _isDraggingHandle ||
-        _isDragHandleReady ||
-        widget.terminalController.shouldSendPointerInput(PointerInput.drag)) {
+        _isDragHandleReady) {
       return false;
     }
 
@@ -908,6 +1130,7 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
 
   void _resetMouseSelectionState() {
     _isMouseDeviceDown = false;
+    _blockSelection = false;
     _isMouseSelectionInProgress = false;
     _mouseSelectionBase = null;
     _mousePointerKind = null;
@@ -945,7 +1168,13 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
       _resetDragHandleState();
     }
 
-    widget.onTapUp?.call(details);
+    // Reported here and only here: the view's own callback reports nothing.
+    _tapUp(
+      widget.onTapUp,
+      details,
+      TerminalMouseButton.left,
+      forceCallback: true,
+    );
 
     // The tap that made this selection is still going up. Clearing here would
     // undo what the same gesture just did, which is what a registered double
@@ -976,6 +1205,7 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
 
     if (_isPointerKindMouse(details.kind)) {
       _isMouseDeviceDown = true;
+      _blockSelection = HardwareKeyboard.instance.isAltPressed;
       _mousePointerKind = details.kind;
       _mouseSelectionBase = renderTerminal.getCellOffset(
         details.localPosition,
@@ -1002,10 +1232,12 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
     // The granularity stays whatever the run that made the selection set, so
     // shift-clicking after a double click goes on taking whole words. That is
     // what a text field on this platform does, and an editor.
-    if (_isShiftPressed && hasSelection) {
+    if (HardwareKeyboard.instance.isShiftPressed && hasSelection) {
       _resetTapCount();
       _cancelPendingTapDown();
       _tapChangedSelection = true;
+      // Grows the selection as the kind it already is.
+      _blockSelection = _isBlockSelection;
       _extendSelectionTo(cellOffset);
       return;
     }
@@ -1091,7 +1323,7 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
     _activeDragHandle = dragHandle;
     _isDragHandleReady = true;
     _dragHandleFixedPoint = dragHandle == _DragHandleType.start
-        ? range.end
+        ? _exclusiveSelectionEnd
         : range.begin;
 
     // Confirms the handle was found, before anything has moved.
@@ -1105,7 +1337,7 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
     final BufferRangeLine range = _selectedRange!.normalized;
     _activeDragHandle = dragHandle;
     _dragHandleFixedPoint = dragHandle == _DragHandleType.start
-        ? range.end
+        ? _exclusiveSelectionEnd
         : range.begin;
     _isDragHandleReady = false;
     _isDraggingHandle = true;
@@ -1255,8 +1487,18 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
     final BufferRangeLine normalized = range.normalized;
     if (normalized.isCollapsed) {
       renderTerminal.selectCharacters(normalized.begin);
+    } else if (_blockSelection && _isMouseDeviceDown) {
+      final a = normalized.begin;
+      final b = normalized.end;
+      renderTerminal.selectBufferRange(
+        BufferRangeBlock(
+          CellOffset(math.min(a.x, b.x), a.y),
+          CellOffset(math.max(a.x, b.x), b.y),
+        ),
+        mode: SelectionMode.block,
+      );
     } else {
-      renderTerminal.selectBufferRange(normalized);
+      renderTerminal.selectBufferRange(normalized, mode: SelectionMode.line);
     }
     
     _syncSelectionFromController();
@@ -1270,21 +1512,9 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
     _isDraggingHandle = false;
   }
 
-  void onSecondaryTapDown(TapDownDetails details) {
-    _tapDown(widget.onSecondaryTapDown, details, TerminalMouseButton.right);
-  }
 
-  void onSecondaryTapUp(TapUpDetails details) {
-    _tapUp(widget.onSecondaryTapUp, details, TerminalMouseButton.right);
-  }
 
-  void onTertiaryTapDown(TapDownDetails details) {
-    _tapDown(widget.onTertiaryTapDown, details, TerminalMouseButton.middle);
-  }
 
-  void onTertiaryTapUp(TapUpDetails details) {
-    _tapUp(widget.onTertiaryTapUp, details, TerminalMouseButton.right);
-  }
 
   /// Anchors a mouse selection that [onTapDown] never got to anchor.
   ///
@@ -1303,6 +1533,7 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
     }
 
     _isMouseDeviceDown = true;
+    _blockSelection = HardwareKeyboard.instance.isAltPressed;
     _mousePointerKind = _lastPointerDownKind;
     _mouseSelectionBase = renderTerminal.getCellOffset(position);
     _isMouseSelectionInProgress = false;
@@ -1318,6 +1549,7 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
   void onScaleStart(ScaleStartDetails details) {
     // Whatever this turns out to be, it is not the click being held back.
     _cancelPendingTapDown();
+    _releaseTapReportedButtons();
 
     _anchorMouseSelectionIfNeeded();
 
@@ -1344,7 +1576,7 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
       _isDraggingHandle = true;
       final BufferRangeLine range = _selectedRange!.normalized;
       _dragHandleFixedPoint = _activeDragHandle == _DragHandleType.start
-          ? range.end
+          ? _exclusiveSelectionEnd
           : range.begin;
       _longPressInitialCellOffset = null;
       if (widget.showToolbar) {
@@ -1483,6 +1715,7 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
   void _onLongPressStart(LongPressStartDetails details) {
     // This is a long press, not the click being held back.
     _cancelPendingTapDown();
+    _releaseTapReportedButtons();
 
     // A handle is armed, and a long press on one starts nothing: adjusting a
     // selection is what its handles are for. The release puts its menu up.
