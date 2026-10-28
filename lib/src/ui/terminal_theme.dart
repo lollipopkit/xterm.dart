@@ -56,4 +56,62 @@ class TerminalTheme {
   final Color searchHitBackground;
   final Color searchHitBackgroundCurrent;
   final Color searchHitForeground;
+
+  // By value, for the same reason as `TerminalStyle`: a theme copied into a
+  // new instance with nothing changed must not empty the paint caches.
+  @override
+  bool operator ==(Object other) =>
+      other is TerminalTheme &&
+      other.cursor == cursor &&
+      other.selectionCursor == selectionCursor &&
+      other.selection == selection &&
+      other.foreground == foreground &&
+      other.background == background &&
+      other.black == black &&
+      other.red == red &&
+      other.green == green &&
+      other.yellow == yellow &&
+      other.blue == blue &&
+      other.magenta == magenta &&
+      other.cyan == cyan &&
+      other.white == white &&
+      other.brightBlack == brightBlack &&
+      other.brightRed == brightRed &&
+      other.brightGreen == brightGreen &&
+      other.brightYellow == brightYellow &&
+      other.brightBlue == brightBlue &&
+      other.brightMagenta == brightMagenta &&
+      other.brightCyan == brightCyan &&
+      other.brightWhite == brightWhite &&
+      other.searchHitBackground == searchHitBackground &&
+      other.searchHitBackgroundCurrent == searchHitBackgroundCurrent &&
+      other.searchHitForeground == searchHitForeground;
+
+  @override
+  int get hashCode => Object.hashAll([
+    cursor,
+    selectionCursor,
+    selection,
+    foreground,
+    background,
+    black,
+    red,
+    green,
+    yellow,
+    blue,
+    magenta,
+    cyan,
+    white,
+    brightBlack,
+    brightRed,
+    brightGreen,
+    brightYellow,
+    brightBlue,
+    brightMagenta,
+    brightCyan,
+    brightWhite,
+    searchHitBackground,
+    searchHitBackgroundCurrent,
+    searchHitForeground,
+  ]);
 }

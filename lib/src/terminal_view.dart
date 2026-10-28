@@ -320,6 +320,10 @@ class TerminalViewState extends State<TerminalView>
       _prevIsAltBuffer = widget.terminal.isUsingAltBuffer;
       _prevMouseMode = widget.terminal.mouseMode;
       _updateCursorBlink(resetVisible: true);
+      // Anchored in the old terminal's buffer, so it means nothing here.
+      if (oldWidget.controller == widget.controller) {
+        _controller.clearSelection();
+      }
     }
     if (oldWidget.controller != widget.controller) {
       // The selection listener moves with the controller: left on the old one
@@ -760,11 +764,29 @@ class TerminalViewState extends State<TerminalView>
     // A position not yet laid out has no extent: `maxScrollExtent` asserts one
     // with `!`, and a key typed in that frame threw (SERVERBOX-14B).
     if (position != null && position.hasContentDimensions) {
-      position.animateTo(
-        position.maxScrollExtent,
-        duration: const Duration(milliseconds: 377),
-        curve: Curves.fastEaseInToSlowEaseOut,
-      );
+      final target = position.maxScrollExtent;
+      position
+          .animateTo(
+            target,
+            duration: const Duration(milliseconds: 377),
+            curve: Curves.fastEaseInToSlowEaseOut,
+          )
+          .then((_) {
+            // Output during the animation moved the bottom past where it was
+            // going. Caught up after the next layout, which is what applies
+            // that output to the extent; not when something else (a drag)
+            // stopped the animation short.
+            if (!mounted) return;
+            WidgetsBinding.instance
+              ..addPostFrameCallback((_) {
+                if (!mounted || !position.hasContentDimensions) return;
+                if (position.pixels == target &&
+                    position.maxScrollExtent > target) {
+                  position.jumpTo(position.maxScrollExtent);
+                }
+              })
+              ..scheduleFrame();
+          });
     }
   }
 

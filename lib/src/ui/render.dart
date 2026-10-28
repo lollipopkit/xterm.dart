@@ -4,6 +4,7 @@ import 'dart:ui';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/widgets.dart';
 import 'package:xterm/src/core/buffer/cell_offset.dart';
+import 'package:xterm/src/core/buffer/line.dart';
 import 'package:xterm/src/core/buffer/range.dart';
 import 'package:xterm/src/core/buffer/range_line.dart';
 import 'package:xterm/src/core/buffer/segment.dart';
@@ -263,7 +264,44 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
 
     if (_stickToBottom) {
       _offset.correctBy(_maxScrollExtent - _scrollOffset);
+    } else {
+      _keepTopLine();
     }
+    _rememberTopLine();
+  }
+
+  /// The line at the top of the view and the index it had then. A full
+  /// scrollback drops lines off its front as output arrives, which moves every
+  /// line up while the scroll offset stays put; following this line keeps a
+  /// view scrolled up on the text being read.
+  BufferLine? _topLine;
+  int _topLineIndex = 0;
+
+  void _keepTopLine() {
+    final line = _topLine;
+    if (line == null || !line.attached) return;
+    final lines = _terminal.buffer.lines;
+    final index = line.index;
+    // Another buffer's line, after a switch to or from the alternate screen.
+    if (index >= lines.length || !identical(lines[index], line)) return;
+    final moved = index - _topLineIndex;
+    if (moved != 0) {
+      _offset.correctBy(moved * _painter.cellSize.height);
+    }
+  }
+
+  void _rememberTopLine() {
+    final lines = _terminal.buffer.lines;
+    if (lines.length == 0) {
+      _topLine = null;
+      return;
+    }
+    final row = (_scrollOffset ~/ _painter.cellSize.height).clamp(
+      0,
+      lines.length - 1,
+    );
+    _topLine = lines[row];
+    _topLineIndex = row;
   }
 
   /// Total height of the terminal in pixels. Includes scrollback buffer.
@@ -497,12 +535,14 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
   /// Update the viewport size in cells based on the current widget size in
   /// pixels.
   void _updateViewportSize() {
-    if (size <= _painter.cellSize) {
+    final width = size.width - _padding.horizontal;
+    if (width < _painter.cellSize.width ||
+        _viewportHeight < _painter.cellSize.height) {
       return;
     }
 
     final viewportSize = TerminalSize(
-      size.width ~/ _painter.cellSize.width,
+      width ~/ _painter.cellSize.width,
       _viewportHeight ~/ _painter.cellSize.height,
     );
 
@@ -558,7 +598,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
   /// The offset of the cursor from the top left corner of this render object.
   Offset get cursorOffset {
     return Offset(
-      _terminal.buffer.cursorX * _painter.cellSize.width,
+      _terminal.buffer.cursorX * _painter.cellSize.width + _padding.left,
       _terminal.buffer.absoluteCursorY * _painter.cellSize.height + _lineOffset,
     );
   }
@@ -591,7 +631,10 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     for (var i = effectFirstLine; i <= effectLastLine; i++) {
       _painter.paintLine(
         canvas,
-        offset.translate(0, (i * charHeight + _lineOffset).truncateToDouble()),
+        offset.translate(
+          _padding.left,
+          (i * charHeight + _lineOffset).truncateToDouble(),
+        ),
         lines[i],
         reverseDisplay: _terminal.reverseDisplayMode,
       );
@@ -755,7 +798,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     final endX = end ?? (segment.end ?? _terminal.viewWidth).toDouble();
 
     final startOffset = Offset(
-      startX * _painter.cellSize.width,
+      startX * _painter.cellSize.width + _padding.left,
       segment.line * _painter.cellSize.height + _lineOffset,
     );
 
