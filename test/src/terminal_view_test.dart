@@ -216,6 +216,64 @@ void main() {
       expect(sizes.last, (terminal.viewWidth, terminal.viewHeight));
     });
 
+    testWidgets('an eased height resizes once, its small steps included', (
+      tester,
+    ) async {
+      final sizes = <(int, int)>[];
+      final terminal = Terminal(onResize: (w, h, _, _) => sizes.add((w, h)));
+      final box = ValueNotifier(const Size(400, 600));
+      await tester.pumpWidget(_SizedTerminal(terminal, box));
+      await tester.pump();
+      expect(sizes, hasLength(1));
+
+      // Fast in the middle, under a row at either end.
+      for (final step in [1, 2, 4, 6, 10, 30, 60, 60, 30, 20, 10, 6, 4, 2, 1]) {
+        box.value = Size(400, box.value.height - step);
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      await tester.pump(const Duration(milliseconds: 16));
+      await tester.pump(const Duration(milliseconds: 16));
+
+      final cell = _render(tester).cellSize;
+      expect(sizes, hasLength(2));
+      expect(sizes.last, (terminal.viewWidth, 354 ~/ cell.height));
+    });
+
+    testWidgets('a width that changes resizes at once', (tester) async {
+      final sizes = <(int, int)>[];
+      final terminal = Terminal(onResize: (w, h, _, _) => sizes.add((w, h)));
+      final box = ValueNotifier(const Size(400, 600));
+      await tester.pumpWidget(_SizedTerminal(terminal, box));
+      await tester.pump();
+
+      box.value = const Size(300, 500);
+      await tester.pump();
+
+      final cell = _render(tester).cellSize;
+      expect(sizes, hasLength(2));
+      expect(sizes.last, (300 ~/ cell.width, 500 ~/ cell.height));
+    });
+
+    testWidgets('turning autoResize on resizes to the view', (tester) async {
+      final terminal = Terminal();
+      Widget view(bool autoResize) => MaterialApp(
+        home: Align(
+          alignment: Alignment.topLeft,
+          child: SizedBox(
+            width: 400,
+            height: 600,
+            child: TerminalView(terminal, autoResize: autoResize),
+          ),
+        ),
+      );
+      await tester.pumpWidget(view(false));
+      expect(terminal.viewWidth, 80);
+
+      await tester.pumpWidget(view(true));
+      final cell = _render(tester).cellSize;
+      expect(terminal.viewWidth, 400 ~/ cell.width);
+    });
+
     testWidgets('a side inset moves the text and the hit test together', (
       tester,
     ) async {
@@ -367,4 +425,24 @@ void main() {
       expect(controller.selection, isNull);
     });
   });
+}
+
+class _SizedTerminal extends StatelessWidget {
+  const _SizedTerminal(this.terminal, this.size);
+
+  final Terminal terminal;
+  final ValueNotifier<Size> size;
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      home: ValueListenableBuilder(
+        valueListenable: size,
+        builder: (_, value, _) => Align(
+          alignment: Alignment.topLeft,
+          child: SizedBox.fromSize(size: value, child: TerminalView(terminal)),
+        ),
+      ),
+    );
+  }
 }
