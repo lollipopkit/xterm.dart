@@ -2,6 +2,7 @@ import 'dart:math' show max;
 import 'dart:ui';
 
 import 'package:flutter/rendering.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/widgets.dart';
 import 'package:xterm/src/core/buffer/cell_offset.dart';
 import 'package:xterm/src/core/buffer/line.dart';
@@ -85,6 +86,8 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
   set autoResize(bool value) {
     if (value == _autoResize) return;
     _autoResize = value;
+    // The viewport may be the size it was, which a layout does not act on.
+    _resizeTerminalIfNeeded();
     markNeedsLayout();
   }
 
@@ -226,6 +229,13 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     _terminal.addListener(_onTerminalChange);
     _controller.addListener(_onControllerUpdate);
     _focusNode.addListener(_onFocusChange);
+    // A settle dropped while detached; the viewport kept its new size.
+    final cells = _viewportSize;
+    if (cells != null &&
+        (cells.width != _terminal.viewWidth ||
+            cells.height != _terminal.viewHeight)) {
+      _settleHeightLater();
+    }
   }
 
   @override
@@ -546,10 +556,60 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
       _viewportHeight ~/ _painter.cellSize.height,
     );
 
-    if (_viewportSize != viewportSize) {
-      _viewportSize = viewportSize;
+    final previous = _viewportSize;
+    final heightMoved =
+        _laidOutHeight != null && _laidOutHeight != _viewportHeight;
+    _laidOutHeight = _viewportHeight;
+    _viewportSize = viewportSize;
+
+    if (previous == null || previous.width != viewportSize.width) {
       _resizeTerminalIfNeeded();
+      return;
     }
+    // A height that changes frame after frame is an animation, as a soft
+    // keyboard's: each size would reach the program as a SIGWINCH and its
+    // redraw arrive for a size already gone. The view clips to the bottom
+    // meanwhile, and the terminal takes the size the animation ends at.
+    // Pixels, not rows, tell whether it still moves: an eased animation's
+    // first and last frames move less than a row.
+    if (heightMoved) _settleHeightLater();
+  }
+
+  double? _laidOutHeight;
+  bool _heightChanged = false;
+  bool _heightSettling = false;
+
+  void _settleHeightLater() {
+    if (!_autoResize) return;
+    _heightChanged = true;
+    if (_heightSettling) return;
+    _heightSettling = true;
+    SchedulerBinding.instance.addPostFrameCallback(_settleHeight);
+  }
+
+  void _settleHeight(Duration _) {
+    if (!attached) {
+      _heightSettling = false;
+      return;
+    }
+    if (_heightChanged) {
+      // Changed in this frame; one frame more decides whether it goes on.
+      _heightChanged = false;
+      SchedulerBinding.instance
+        ..addPostFrameCallback(_settleHeight)
+        ..scheduleFrame();
+      return;
+    }
+    _heightSettling = false;
+    final cells = _viewportSize;
+    if (cells == null ||
+        (cells.width == _terminal.viewWidth &&
+            cells.height == _terminal.viewHeight)) {
+      return;
+    }
+    // Ahead of the resize, whose callback can throw.
+    markNeedsLayout();
+    _resizeTerminalIfNeeded();
   }
 
   /// Notify the underlying terminal that the viewport size has changed.
