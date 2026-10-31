@@ -546,7 +546,9 @@ class TerminalViewState extends State<TerminalView>
       child: child,
     );
 
-    return child;
+    // A terminal's grid runs left to right whatever the app's language: in a
+    // right-to-left locale the selection handles were mirrored against it.
+    return Directionality(textDirection: TextDirection.ltr, child: child);
   }
 
   void requestKeyboard() {
