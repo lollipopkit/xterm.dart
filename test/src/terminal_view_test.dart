@@ -76,6 +76,25 @@ RenderTerminal _render(WidgetTester tester) =>
 
 void main() {
   group('TerminalView', () {
+    testWidgets('lays out left to right in a right-to-left app', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Directionality(
+            textDirection: TextDirection.rtl,
+            child: Scaffold(body: TerminalView(Terminal())),
+          ),
+        ),
+      );
+      final inside = tester.element(
+        find.byWidgetPredicate(
+          (w) => w.runtimeType.toString() == '_TerminalView',
+        ),
+      );
+      expect(Directionality.of(inside), TextDirection.ltr);
+    });
+
     testWidgets('Ctrl+A and Ctrl+X reach the shell', (tester) async {
       final view = await _pump(tester, content: 'some text');
       await view.chord([
