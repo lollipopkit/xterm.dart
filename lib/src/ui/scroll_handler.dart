@@ -1,6 +1,23 @@
 import 'package:flutter/gestures.dart';
 import 'package:flutter/widgets.dart';
 import 'package:xterm/core.dart';
+import 'package:xterm/src/ui/scroll_unit.dart';
+
+/// Whether the program in the terminal wants the scroll for itself.
+///
+/// The alternate screen buffer has no scrollback to scroll, and a program
+/// that reports the wheel wants the wheel — both mean the scroll is the
+/// program's and not the terminal's.
+///
+/// The one answer to this question in the package: the handler outside the
+/// scrollable forwards the scroll to the program when it is true, and the
+/// handler inside it scrolls the scrollback when it is not, and the two must
+/// not disagree about which is which.
+bool terminalWantsScroll(Terminal terminal) {
+  if (terminal.isUsingAltBuffer) return true;
+  final mode = terminal.mouseMode;
+  return mode != MouseMode.none && mode.reportScroll;
+}
 
 /// Handles scrolling gestures when the terminal application declares support
 /// for mouse tracking (alt screen buffer or mouse mode with scroll reporting).
@@ -50,16 +67,15 @@ class _TerminalScrollGestureHandlerState
   var isAltBuffer = false;
   var lastPointerPosition = Offset.zero;
   var _mouseMode = MouseMode.none;
-  double _accumulatedScroll = 0.0;
+
+  /// The lines of text a scroll has moved that have not made a whole line
+  /// yet. What a slide adds up to before it becomes one.
+  double _pendingLines = 0;
   double? _lastTouchY;
 
   /// Whether scroll events should be intercepted and forwarded to the terminal
   /// instead of being handled by the inner scrollable.
-  bool get _shouldForwardScroll {
-    if (widget.terminal.isUsingAltBuffer) return true;
-    final mode = widget.terminal.mouseMode;
-    return mode != MouseMode.none && mode.reportScroll;
-  }
+  bool get _shouldForwardScroll => terminalWantsScroll(widget.terminal);
 
   bool _isTouchPointer(PointerDeviceKind kind) {
     return kind == PointerDeviceKind.touch || kind == PointerDeviceKind.stylus;
@@ -96,7 +112,7 @@ class _TerminalScrollGestureHandlerState
     if (isAltBuffer != newIsAltBuffer || _mouseMode != newMouseMode) {
       isAltBuffer = newIsAltBuffer;
       _mouseMode = newMouseMode;
-      _accumulatedScroll = 0.0;
+      _pendingLines = 0;
       _lastTouchY = null;
       setState(() {});
     }
@@ -105,20 +121,35 @@ class _TerminalScrollGestureHandlerState
   /// Process a raw scroll delta from [PointerScrollEvent], accumulating
   /// fractional scrolls and dispatching discrete scroll events per line.
   void _handleScrollDelta(double dy, {bool fromTouch = false}) {
-    _accumulatedScroll += dy;
     final lineHeight = widget.getLineHeight();
     if (lineHeight <= 0) return;
 
-    // Use a larger threshold for touch to prevent overly sensitive scrolling
-    final threshold = fromTouch ? lineHeight * 3 : lineHeight;
-    final lines = (_accumulatedScroll.abs() / threshold).floor();
-    if (lines > 0) {
-      final up = _accumulatedScroll < 0;
-      for (var i = 0; i < lines; i++) {
-        _sendScrollEvent(up);
-      }
-      _accumulatedScroll -= (up ? -lines : lines) * threshold;
+    _pendingLines += _linesFor(dy, fromTouch: fromTouch, lineHeight: lineHeight);
+    final lines = _pendingLines.truncate();
+    if (lines == 0) return;
+
+    final up = lines < 0;
+    for (var i = 0; i < lines.abs(); i++) {
+      _sendScrollEvent(up);
     }
+    _pendingLines -= lines;
+  }
+
+  /// The lines of text that [pixels] of scrolling is worth.
+  ///
+  /// A click of the wheel is the platform's own scroll unit, and it is worth
+  /// the same three lines wherever it was made — see [TerminalScrollUnit]. A
+  /// finger is not a wheel: it moves in the lines it travels, and a third of
+  /// a line is enough of one before the program is told.
+  double _linesFor(
+    double pixels, {
+    required bool fromTouch,
+    required double lineHeight,
+  }) {
+    if (fromTouch) return pixels / (lineHeight * 3);
+    final unit = TerminalScrollUnit.of(widget.terminal.platform);
+    if (unit == null) return pixels / lineHeight;
+    return unit.linesFor(pixels, lineHeight);
   }
 
   /// Send a single scroll event to the terminal. The event is first offered to
@@ -154,7 +185,17 @@ class _TerminalScrollGestureHandlerState
       onPointerSignal: (event) {
         if (event is PointerScrollEvent) {
           lastPointerPosition = event.localPosition;
-          _handleScrollDelta(event.scrollDelta.dy);
+          // The resolver gives a signal to the first listener that asks for
+          // it, and this is the one that asks: the program in the terminal
+          // wanted the wheel, and the scrollable inside has been told not to
+          // scroll.
+          GestureBinding.instance.pointerSignalResolver.register(
+            event,
+            (event) {
+              event.respond(allowPlatformDefault: false);
+              _handleScrollDelta((event as PointerScrollEvent).scrollDelta.dy);
+            },
+          );
         }
       },
       onPointerDown: (event) {
@@ -179,5 +220,103 @@ class _TerminalScrollGestureHandlerState
       },
       child: widget.child,
     );
+  }
+}
+
+/// Scrolls the terminal's scrollback with the wheel and with a trackpad.
+///
+/// Inside the [Scrollable] on purpose. A pointer signal is resolved by the
+/// first listener that is hit, and the listener a [Scrollable] puts around
+/// its viewport is deeper than the one around the scrollable itself — so
+/// being inside is what lets this take the wheel before the scrollable does,
+/// and that is the only way to scroll by whole lines rather than by whatever
+/// number of pixels the platform's wheel happens to be.
+///
+/// The other half of the scroll is [TerminalScrollGestureHandler], outside the
+/// scrollable, which forwards the scroll to the program in the terminal when
+/// the program asked for the wheel. Only one of the two is ever asked to
+/// scroll: this one when the program did not.
+class TerminalScrollbackHandler extends StatefulWidget {
+  const TerminalScrollbackHandler({
+    super.key,
+    required this.terminal,
+    required this.controller,
+    required this.getLineHeight,
+    required this.enabled,
+    required this.child,
+  });
+
+  /// The terminal being shown, and the platform it is being shown on.
+  final Terminal terminal;
+
+  /// The scroll controller of the scrollable this scrolls.
+  final ScrollController controller;
+
+  /// Returns the pixel height of lines in the terminal.
+  final double Function() getLineHeight;
+
+  /// Whether this is the one that takes the scroll.
+  ///
+  /// False when the program in the terminal asked for the wheel itself, which
+  /// is the same question [terminalWantsScroll] answers.
+  final bool enabled;
+
+  final Widget child;
+
+  @override
+  State<TerminalScrollbackHandler> createState() =>
+      _TerminalScrollbackHandlerState();
+}
+
+class _TerminalScrollbackHandlerState extends State<TerminalScrollbackHandler> {
+  /// The lines of text a scroll has moved that have not made a whole line
+  /// yet. What a slide adds up to before it becomes one.
+  double _pendingLines = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    return Listener(
+      onPointerSignal: (event) {
+        if (event is! PointerScrollEvent) return;
+        if (!widget.enabled) return;
+        // The resolver gives a signal to the first listener that asks for it.
+        // This is the first one asked — it is inside the scrollable, and the
+        // scrollable's own listener is further out — so the scrollable never
+        // scrolls by its own pixels and this scrolls by whole lines instead.
+        GestureBinding.instance.pointerSignalResolver.register(
+          event,
+          (event) {
+            event.respond(allowPlatformDefault: false);
+            _scrollBy((event as PointerScrollEvent).scrollDelta.dy);
+          },
+        );
+      },
+      child: widget.child,
+    );
+  }
+
+  void _scrollBy(double pixels) {
+    final lineHeight = widget.getLineHeight();
+    if (lineHeight <= 0) return;
+
+    _pendingLines += _linesFor(pixels, lineHeight);
+    final lines = _pendingLines.truncate();
+    if (lines == 0) return;
+    _pendingLines -= lines;
+
+    if (!widget.controller.hasClients) return;
+    widget.controller.position.pointerScroll(lines * lineHeight);
+  }
+
+  /// The lines of text that [pixels] of scrolling is worth.
+  ///
+  /// A click of the wheel is the platform's own scroll unit, and it is worth
+  /// the same three lines wherever it was made — see [TerminalScrollUnit]. A
+  /// trackpad's pixels are the finger's own, and a line of travel is a line
+  /// of text.
+  double _linesFor(double pixels, double lineHeight) {
+    final unit = TerminalScrollUnit.of(widget.terminal.platform);
+    if (unit == null) return pixels / lineHeight;
+    return unit.linesFor(pixels, lineHeight);
   }
 }
