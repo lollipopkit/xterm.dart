@@ -287,9 +287,20 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
   BufferLine? _topLine;
   int _topLineIndex = 0;
 
+  /// How far the view was above the bottom, for when its top line is gone.
+  double _bottomDistance = 0;
+
   void _keepTopLine() {
     final line = _topLine;
-    if (line == null || !line.attached) return;
+    if (line == null) return;
+    if (!line.attached) {
+      // The buffer was cleared under it, as a reset before a replay of the
+      // same text does. What replaces it ends where it ended, while it may
+      // start elsewhere: the view keeps its distance from the bottom.
+      final target = max(0.0, _maxScrollExtent - _bottomDistance);
+      _offset.correctBy(target - _scrollOffset);
+      return;
+    }
     final lines = _terminal.buffer.lines;
     final index = line.index;
     // Another buffer's line, after a switch to or from the alternate screen.
@@ -312,6 +323,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     );
     _topLine = lines[row];
     _topLineIndex = row;
+    _bottomDistance = _maxScrollExtent - _scrollOffset;
   }
 
   /// Total height of the terminal in pixels. Includes scrollback buffer.
