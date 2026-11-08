@@ -201,6 +201,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
   var _stickToBottom = true;
 
   void _onScroll() {
+    _restoring = false;
     _stickToBottom = _scrollOffset >= _maxScrollExtent;
     markNeedsLayout();
     _notifyEditableRect();
@@ -290,15 +291,21 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
   /// How far the view was above the bottom, for when its top line is gone.
   double _bottomDistance = 0;
 
+  /// The view waits for the text replacing a cleared buffer to reach back to
+  /// [_bottomDistance]: a layout before the replay has arrived must not take
+  /// the empty screen for where the view is.
+  bool _restoring = false;
+
   void _keepTopLine() {
     final line = _topLine;
     if (line == null) return;
-    if (!line.attached) {
+    if (!line.attached || _restoring) {
       // The buffer was cleared under it, as a reset before a replay of the
       // same text does. What replaces it ends where it ended, while it may
       // start elsewhere: the view keeps its distance from the bottom.
-      final target = max(0.0, _maxScrollExtent - _bottomDistance);
-      _offset.correctBy(target - _scrollOffset);
+      final target = _maxScrollExtent - _bottomDistance;
+      _offset.correctBy(max(0.0, target) - _scrollOffset);
+      _restoring = target < 0;
       return;
     }
     final lines = _terminal.buffer.lines;
@@ -323,7 +330,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     );
     _topLine = lines[row];
     _topLineIndex = row;
-    _bottomDistance = _maxScrollExtent - _scrollOffset;
+    if (!_restoring) _bottomDistance = _maxScrollExtent - _scrollOffset;
   }
 
   /// Total height of the terminal in pixels. Includes scrollback buffer.
