@@ -118,13 +118,20 @@ class _TerminalScrollGestureHandlerState
 
   /// Process a raw scroll delta from [PointerScrollEvent], accumulating
   /// fractional scrolls and dispatching discrete scroll events per line.
-  void _handleScrollDelta(double dy, {bool fromTouch = false}) {
+  void _handleScrollDelta(
+    double dy, {
+    bool fromTouch = false,
+    bool fromTrackpad = false,
+  }) {
     final lineHeight = widget.getLineHeight();
     if (lineHeight <= 0) return;
 
-    // A finger moves three lines of travel for each line it reports.
+    // A finger on the screen moves three lines of travel for each line it
+    // reports; one on a trackpad, a line of travel for a line.
     final pixelsPerLine = fromTouch
         ? lineHeight * 3
+        : fromTrackpad
+        ? lineHeight
         : TerminalScrollUnit.pixelsPerLine(widget.terminal.platform) ??
               lineHeight;
     final lines = _lines.add(dy, pixelsPerLine);
@@ -178,6 +185,12 @@ class _TerminalScrollGestureHandlerState
             },
           );
         }
+      },
+      // A trackpad's scroll is a pan, never a scroll signal: without this the
+      // program asking for the wheel got nothing from one.
+      onPointerPanZoomUpdate: (event) {
+        lastPointerPosition = event.localPosition;
+        _handleScrollDelta(-event.localPanDelta.dy, fromTrackpad: true);
       },
       onPointerDown: (event) {
         lastPointerPosition = event.localPosition;
