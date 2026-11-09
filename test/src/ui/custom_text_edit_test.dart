@@ -764,6 +764,44 @@ void _imeDeltas() {
     expect(sent, ['  ']);
   });
 
+  testWidgets('an emoji deleted from the text before the reset is one backspace', (
+    tester,
+  ) async {
+    final edit = await _pumpDeltas(tester, deleteDetection: true);
+
+    edit.send(_typed('  ', '😀'));
+    edit.send(
+      const TextEditingDeltaDeletion(
+        oldText: '  😀',
+        deletedRange: TextRange(start: 2, end: 4),
+        selection: TextSelection.collapsed(offset: 2),
+        composing: TextRange.empty,
+      ),
+    );
+
+    expect(edit.inserted, ['😀']);
+    expect(edit.deletes, 1);
+  });
+
+  testWidgets('an IME writing over the placeholder before the reset deletes '
+      'only what was sent', (tester) async {
+    final edit = await _pumpDeltas(tester, deleteDetection: true);
+
+    edit.send(_typed('  ', 'a'));
+    edit.send(
+      const TextEditingDeltaReplacement(
+        oldText: '  a',
+        replacementText: 'b',
+        replacedRange: TextRange(start: 0, end: 3),
+        selection: TextSelection.collapsed(offset: 1),
+        composing: TextRange.empty,
+      ),
+    );
+
+    expect(edit.inserted, ['a', 'b']);
+    expect(edit.deletes, 1);
+  });
+
   testWidgets('a composition through deltas sends only its commit', (
     tester,
   ) async {

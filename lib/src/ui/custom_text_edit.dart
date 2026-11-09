@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:material_ui/material_ui.dart';
@@ -593,17 +594,29 @@ class CustomTextEditState extends State<CustomTextEdit>
   TextEditingValue _fromStale(TextEditingValue value) {
     final stale = _staleText!;
     final text = value.text;
+    final init = _initEditingState.text;
+    // In whole characters: an emoji is one backspace, not two.
     var common = 0;
-    while (common < _staleSent &&
-        common < text.length &&
-        stale.codeUnitAt(common) == text.codeUnitAt(common)) {
-      common++;
+    final sent = stale.substring(0, _staleSent).characters.iterator;
+    final now = text.characters.iterator;
+    while (sent.moveNext() && now.moveNext() && sent.current == now.current) {
+      common += sent.current.length;
     }
-    for (var i = common; i < _staleSent; i++) {
-      widget.onDelete();
+    // What is left of the placeholder was never sent: an IME writing over it
+    // takes nothing back, as on the placeholder itself.
+    var placeholder = 0;
+    while (placeholder < init.length &&
+        placeholder < _staleSent &&
+        stale.codeUnitAt(placeholder) == init.codeUnitAt(placeholder)) {
+      placeholder++;
+    }
+    final from = max(common, placeholder);
+    if (from < _staleSent) {
+      for (final _ in stale.substring(from, _staleSent).characters) {
+        widget.onDelete();
+      }
     }
     _staleSent = common;
-    final init = _initEditingState.text;
     final end = init.length + text.length - common;
     int moved(int offset) => offset < 0
         ? offset
