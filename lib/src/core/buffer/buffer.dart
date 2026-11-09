@@ -693,6 +693,13 @@ class Buffer {
     }
   }
 
+  /// The index in [lines] of the screen's first row once [resize] has made
+  /// the screen [newHeight] rows, [newHeight] fewer than now: a shorter screen
+  /// gives up the rows below the cursor first, and its top rows only when the
+  /// cursor would not fit otherwise.
+  int screenTopAfterShrink(int newHeight) =>
+      scrollBack + max(0, _cursorY + 1 - newHeight);
+
   void resize(int oldWidth, int oldHeight, int newWidth, int newHeight) {
     final requiredMaxLength = max(maxLines + newHeight, newHeight);
     if (lines.maxLength < requiredMaxLength) {

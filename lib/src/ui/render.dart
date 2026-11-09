@@ -202,7 +202,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
 
   void _onScroll() {
     _restoring = false;
-    _stickToBottom = _scrollOffset >= _maxScrollExtent;
+    _stickToBottom = _scrollOffset >= followOffset;
     markNeedsLayout();
     _notifyEditableRect();
   }
@@ -274,7 +274,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     _updateScrollOffset();
 
     if (_stickToBottom) {
-      _offset.correctBy(_followOffset - _scrollOffset);
+      _offset.correctBy(followOffset - _scrollOffset);
     } else {
       _keepTopLine();
     }
@@ -678,14 +678,16 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
   /// ones above it only when the cursor would not fit: a prompt at the top of
   /// a screen stays at the top. Following the bottom meanwhile pushed it out of
   /// sight for the length of the animation, and the resize brought it back.
-  double get _followOffset {
+  ///
+  /// Only where a resize is coming: without [autoResize] the height never
+  /// reaches the terminal, and the bottom is where its last rows are.
+  double get followOffset {
     final bottom = _maxScrollExtent;
     final cell = _painter.cellSize.height;
-    if (cell <= 0) return bottom;
+    if (!_autoResize || cell <= 0) return bottom;
     final rows = _viewportHeight ~/ cell;
     if (rows <= 0 || rows >= _terminal.viewHeight) return bottom;
-    final buffer = _terminal.buffer;
-    final screenTop = buffer.scrollBack + max(0, buffer.cursorY + 1 - rows);
+    final screenTop = _terminal.buffer.screenTopAfterShrink(rows);
     // As the resized screen will sit: its last row at the bottom of the view.
     final offset = (screenTop + rows) * cell - _viewportHeight;
     return offset.clamp(0.0, bottom);

@@ -5,10 +5,12 @@ import 'package:xterm/xterm.dart';
 /// A terminal whose height is [height], as a page over a sliding keyboard.
 Future<(Terminal, ScrollController)> pumpTerminal(
   WidgetTester tester,
-  ValueNotifier<double> height,
-) async {
+  ValueNotifier<double> height, {
+  bool autoResize = true,
+}) async {
   final terminal = Terminal();
   final scroll = ScrollController();
+  addTearDown(scroll.dispose);
   await tester.pumpWidget(
     MaterialApp(
       home: Align(
@@ -18,7 +20,11 @@ Future<(Terminal, ScrollController)> pumpTerminal(
           builder: (_, h, _) => SizedBox(
             width: 400,
             height: h,
-            child: TerminalView(terminal, scrollController: scroll),
+            child: TerminalView(
+              terminal,
+              scrollController: scroll,
+              autoResize: autoResize,
+            ),
           ),
         ),
       ),
@@ -32,13 +38,15 @@ Future<void> slide(
   WidgetTester tester,
   ValueNotifier<double> height,
   double to,
-  void Function() eachFrame,
-) async {
+  void Function() eachFrame, {
+  void Function()? sliding,
+}) async {
   final from = height.value;
   for (var i = 1; i <= 8; i++) {
     height.value = from + (to - from) * i / 8;
     await tester.pump(const Duration(milliseconds: 16));
     eachFrame();
+    sliding?.call();
   }
   for (var i = 0; i < 5; i++) {
     await tester.pump(const Duration(milliseconds: 16));
@@ -51,6 +59,7 @@ void main() {
     tester,
   ) async {
     final height = ValueNotifier(600.0);
+    addTearDown(height.dispose);
     final (terminal, scroll) = await pumpTerminal(tester, height);
     terminal.write('/ # ');
     await tester.pump();
@@ -66,6 +75,7 @@ void main() {
     tester,
   ) async {
     final height = ValueNotifier(600.0);
+    addTearDown(height.dispose);
     final (terminal, scroll) = await pumpTerminal(tester, height);
     terminal.write('line\r\n' * 200);
     await tester.pump();
@@ -77,5 +87,45 @@ void main() {
       expect(cursorBottom, lessThanOrEqualTo(height.value + 0.001));
       expect(render.cursorOffset.dy, greaterThanOrEqualTo(-0.001));
     });
+  });
+
+  testWidgets('the view still follows the output once the keyboard is up', (
+    tester,
+  ) async {
+    final height = ValueNotifier(600.0);
+    addTearDown(height.dispose);
+    final (terminal, scroll) = await pumpTerminal(tester, height);
+    terminal.write('/ # ');
+    await tester.pump();
+
+    await slide(
+      tester,
+      height,
+      300,
+      () {},
+      // A scroll notification while the keyboard slides, as a programmatic
+      // jump sends.
+      sliding: () => scroll.jumpTo(scroll.position.pixels + 1),
+    );
+    terminal.write('line\r\n' * 100);
+    await tester.pump();
+    expect(scroll.position.pixels, scroll.position.maxScrollExtent);
+  });
+
+  testWidgets('without autoResize the view shows the last rows', (
+    tester,
+  ) async {
+    final height = ValueNotifier(300.0);
+    addTearDown(height.dispose);
+    final (terminal, scroll) = await pumpTerminal(
+      tester,
+      height,
+      autoResize: false,
+    );
+    terminal.resize(80, 40);
+    terminal.write('/ # ');
+    await tester.pump();
+    expect(scroll.position.pixels, scroll.position.maxScrollExtent);
+    expect(scroll.position.maxScrollExtent, greaterThan(0));
   });
 }
