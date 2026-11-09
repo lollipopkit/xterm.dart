@@ -1,66 +1,45 @@
 import 'package:xterm/src/core/platform.dart';
 
-/// The scroll unit of the platform the terminal is running on.
+/// How far a mouse wheel scrolls the terminal, in its lines.
 ///
-/// The engine hands the framework a scroll delta in logical pixels, and how
-/// many pixels one click of the wheel is depends on the system the click came
-/// from. The macOS embedder scales a wheel's delta by 40, the Windows one by
-/// the system's own "lines per click" times 100/3, and the Linux one by 53 —
-/// the last two the numbers Chromium uses. A terminal that took those pixels
-/// at face value scrolled two lines of text per click on a Mac and six on
-/// Windows, for the same gesture, and the Mac was the one that felt stuck.
-///
-/// This is the conversion, and it is the system's own: a click of the wheel
-/// is worth the same three lines of text wherever it was made.
-///
-/// The lines are the terminal's, not the system's — a system scrolls by its
-/// own lines, and a terminal's lines are the ones on the screen.
-class TerminalScrollUnit {
-  const TerminalScrollUnit._({
-    required this.pixelsPerClick,
-    required this.linesPerClick,
-  });
-
-  /// The unit of [platform], or null where there is no wheel to have one: a
-  /// phone scrolls with a finger, and the finger is its own unit.
-  static TerminalScrollUnit? of(TerminalTargetPlatform platform) =>
+/// Every `PointerScrollEvent` on a desktop is a wheel: a trackpad arrives as a
+/// pan-zoom gesture on macOS, Windows and Linux alike. Each engine scales the
+/// wheel's own unit into logical pixels by a fixed factor, Chromium's: 40 per
+/// line on macOS, 100/3 per line on Windows (times the system's lines per
+/// notch), 53 per notch on Linux. Dividing it back out makes a notch three
+/// lines of the terminal everywhere, and on Windows the lines the system is
+/// set to; an accelerated or high-resolution wheel scrolls in proportion.
+abstract final class TerminalScrollUnit {
+  /// The pixels of [platform]'s wheel that make one line of the terminal, or
+  /// null where the engine says nothing about its wheel: a phone's scroll is
+  /// the finger's own pixels.
+  static double? pixelsPerLine(TerminalTargetPlatform platform) =>
       switch (platform) {
-        TerminalTargetPlatform.macos =>
-          const TerminalScrollUnit._(pixelsPerClick: 40, linesPerClick: 3),
-        TerminalTargetPlatform.windows =>
-          const TerminalScrollUnit._(pixelsPerClick: 100, linesPerClick: 3),
-        TerminalTargetPlatform.linux =>
-          const TerminalScrollUnit._(pixelsPerClick: 53, linesPerClick: 3),
+        TerminalTargetPlatform.macos => 40 / 3,
+        TerminalTargetPlatform.windows => 100 / 3,
+        TerminalTargetPlatform.linux => 53 / 3,
         _ => null,
       };
+}
 
-  /// How many logical pixels one click of the wheel is on this platform.
-  final double pixelsPerClick;
+/// Scrolled pixels gathered into whole lines; what falls short of a line
+/// waits for the next scroll.
+class TerminalScrollLines {
+  double _pending = 0;
 
-  /// How many lines of text one click of the wheel is worth.
-  final int linesPerClick;
-
-  /// Whether [pixels] is a whole number of clicks of the wheel.
-  ///
-  /// A wheel says how big a click is and nothing else; a trackpad says how
-  /// far the finger went, which is never a whole number of clicks. The two
-  /// are told apart by that, because the platforms do not agree on saying it
-  /// themselves: Windows sends a trackpad as a trackpad, but macOS and Linux
-  /// send both as a mouse.
-  bool isClicks(double pixels) {
-    final clicks = pixels / pixelsPerClick;
-    return (clicks - clicks.roundToDouble()).abs() < 0.001;
+  /// The whole lines [pixels] completes, signed as it is, at [pixelsPerLine].
+  int add(double pixels, double pixelsPerLine) {
+    if (pixelsPerLine <= 0) return 0;
+    _pending += pixels / pixelsPerLine;
+    // 5 * 100 / 3 pixels over 100 / 3 is 4.999…: a whole line short by a
+    // rounding error is a whole line.
+    final nearest = _pending.roundToDouble();
+    final lines = (_pending - nearest).abs() < 1e-6
+        ? nearest.toInt()
+        : _pending.truncate();
+    _pending -= lines;
+    return lines;
   }
 
-  /// The lines of text that [pixels] of scrolling is worth.
-  ///
-  /// A click is [linesPerClick] lines. A trackpad's pixels are the finger's
-  /// own, and a line of travel is a line of text — as it is on the platform
-  /// that reports one.
-  double linesFor(double pixels, double lineHeight) {
-    if (isClicks(pixels)) {
-      return pixels / pixelsPerClick * linesPerClick;
-    }
-    return pixels / lineHeight;
-  }
+  void reset() => _pending = 0;
 }

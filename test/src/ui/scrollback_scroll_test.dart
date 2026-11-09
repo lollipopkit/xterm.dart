@@ -1,7 +1,6 @@
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:xterm/core.dart';
 import 'package:xterm/xterm.dart';
 
 /// A terminal with scrollback, and the scroll controller that shows it.
@@ -91,24 +90,6 @@ void main() {
     expect(before - scroll.position.pixels, closeTo(3 * lineHeight, 0.001));
   });
 
-  testWidgets('a slide of a trackpad moves a line at a time', (tester) async {
-    final (scroll, lineHeight) = await pumpTerminal(
-      tester,
-      platform: TerminalTargetPlatform.macos,
-    );
-    final before = scroll.position.pixels;
-
-    await tester.sendEventToBinding(
-      PointerScrollEvent(
-        position: const Offset(100, 300),
-        scrollDelta: Offset(0, -lineHeight),
-      ),
-    );
-    await tester.pump();
-
-    expect(before - scroll.position.pixels, closeTo(lineHeight, 0.001));
-  });
-
   testWidgets('the scrollback is scrolled by whole lines', (tester) async {
     final (scroll, lineHeight) = await pumpTerminal(
       tester,
@@ -116,23 +97,24 @@ void main() {
     );
     final before = scroll.position.pixels;
 
-    // A third of a line is not a line, and a line is not three.
+    // A high-resolution wheel's fifth of a notch is not yet a line.
     await tester.sendEventToBinding(
       const PointerScrollEvent(
         position: Offset(100, 300),
-        scrollDelta: Offset(0, -5),
+        scrollDelta: Offset(0, -8),
       ),
     );
     await tester.pump();
     expect(scroll.position.pixels, before);
 
+    // Another fifth makes 0.6 + 0.6 lines: one, at the line height.
     await tester.sendEventToBinding(
-      PointerScrollEvent(
-        position: const Offset(100, 300),
-        scrollDelta: Offset(0, -lineHeight / 2),
+      const PointerScrollEvent(
+        position: Offset(100, 300),
+        scrollDelta: Offset(0, -8),
       ),
     );
     await tester.pump();
-    expect(scroll.position.pixels, before);
+    expect(before - scroll.position.pixels, closeTo(lineHeight, 0.001));
   });
 }

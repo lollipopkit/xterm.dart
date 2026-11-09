@@ -68,9 +68,7 @@ class _TerminalScrollGestureHandlerState
   var lastPointerPosition = Offset.zero;
   var _mouseMode = MouseMode.none;
 
-  /// The lines of text a scroll has moved that have not made a whole line
-  /// yet. What a slide adds up to before it becomes one.
-  double _pendingLines = 0;
+  final _lines = TerminalScrollLines();
   double? _lastTouchY;
 
   /// Whether scroll events should be intercepted and forwarded to the terminal
@@ -112,7 +110,7 @@ class _TerminalScrollGestureHandlerState
     if (isAltBuffer != newIsAltBuffer || _mouseMode != newMouseMode) {
       isAltBuffer = newIsAltBuffer;
       _mouseMode = newMouseMode;
-      _pendingLines = 0;
+      _lines.reset();
       _lastTouchY = null;
       setState(() {});
     }
@@ -124,32 +122,15 @@ class _TerminalScrollGestureHandlerState
     final lineHeight = widget.getLineHeight();
     if (lineHeight <= 0) return;
 
-    _pendingLines += _linesFor(dy, fromTouch: fromTouch, lineHeight: lineHeight);
-    final lines = _pendingLines.truncate();
-    if (lines == 0) return;
-
-    final up = lines < 0;
+    // A finger moves three lines of travel for each line it reports.
+    final pixelsPerLine = fromTouch
+        ? lineHeight * 3
+        : TerminalScrollUnit.pixelsPerLine(widget.terminal.platform) ??
+              lineHeight;
+    final lines = _lines.add(dy, pixelsPerLine);
     for (var i = 0; i < lines.abs(); i++) {
-      _sendScrollEvent(up);
+      _sendScrollEvent(lines < 0);
     }
-    _pendingLines -= lines;
-  }
-
-  /// The lines of text that [pixels] of scrolling is worth.
-  ///
-  /// A click of the wheel is the platform's own scroll unit, and it is worth
-  /// the same three lines wherever it was made — see [TerminalScrollUnit]. A
-  /// finger is not a wheel: it moves in the lines it travels, and a third of
-  /// a line is enough of one before the program is told.
-  double _linesFor(
-    double pixels, {
-    required bool fromTouch,
-    required double lineHeight,
-  }) {
-    if (fromTouch) return pixels / (lineHeight * 3);
-    final unit = TerminalScrollUnit.of(widget.terminal.platform);
-    if (unit == null) return pixels / lineHeight;
-    return unit.linesFor(pixels, lineHeight);
   }
 
   /// Send a single scroll event to the terminal. The event is first offered to
@@ -223,7 +204,7 @@ class _TerminalScrollGestureHandlerState
   }
 }
 
-/// Scrolls the terminal's scrollback with the wheel and with a trackpad.
+/// Scrolls the terminal's scrollback with the wheel, by whole lines.
 ///
 /// Inside the [Scrollable] on purpose. A pointer signal is resolved by the
 /// first listener that is hit, and the listener a [Scrollable] puts around
@@ -269,9 +250,7 @@ class TerminalScrollbackHandler extends StatefulWidget {
 }
 
 class _TerminalScrollbackHandlerState extends State<TerminalScrollbackHandler> {
-  /// The lines of text a scroll has moved that have not made a whole line
-  /// yet. What a slide adds up to before it becomes one.
-  double _pendingLines = 0;
+  final _lines = TerminalScrollLines();
 
   @override
   Widget build(BuildContext context) {
@@ -298,25 +277,10 @@ class _TerminalScrollbackHandlerState extends State<TerminalScrollbackHandler> {
   void _scrollBy(double pixels) {
     final lineHeight = widget.getLineHeight();
     if (lineHeight <= 0) return;
-
-    _pendingLines += _linesFor(pixels, lineHeight);
-    final lines = _pendingLines.truncate();
-    if (lines == 0) return;
-    _pendingLines -= lines;
-
-    if (!widget.controller.hasClients) return;
+    final pixelsPerLine =
+        TerminalScrollUnit.pixelsPerLine(widget.terminal.platform) ?? lineHeight;
+    final lines = _lines.add(pixels, pixelsPerLine);
+    if (lines == 0 || !widget.controller.hasClients) return;
     widget.controller.position.pointerScroll(lines * lineHeight);
-  }
-
-  /// The lines of text that [pixels] of scrolling is worth.
-  ///
-  /// A click of the wheel is the platform's own scroll unit, and it is worth
-  /// the same three lines wherever it was made — see [TerminalScrollUnit]. A
-  /// trackpad's pixels are the finger's own, and a line of travel is a line
-  /// of text.
-  double _linesFor(double pixels, double lineHeight) {
-    final unit = TerminalScrollUnit.of(widget.terminal.platform);
-    if (unit == null) return pixels / lineHeight;
-    return unit.linesFor(pixels, lineHeight);
   }
 }
