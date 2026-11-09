@@ -202,7 +202,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
 
   void _onScroll() {
     _restoring = false;
-    _stickToBottom = _scrollOffset >= _maxScrollExtent;
+    _stickToBottom = _scrollOffset >= followOffset;
     markNeedsLayout();
     _notifyEditableRect();
   }
@@ -274,7 +274,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     _updateScrollOffset();
 
     if (_stickToBottom) {
-      _offset.correctBy(_maxScrollExtent - _scrollOffset);
+      _offset.correctBy(followOffset - _scrollOffset);
     } else {
       _keepTopLine();
     }
@@ -668,6 +668,29 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
 
   double get _maxScrollExtent {
     return max(_terminalHeight - _viewportHeight, 0.0);
+  }
+
+  /// Where a view following the output sits: at the bottom, or, while a
+  /// shorter height waits to reach the terminal (a keyboard sliding up),
+  /// where the resize will leave it.
+  ///
+  /// A screen made shorter gives up the rows below the cursor first and the
+  /// ones above it only when the cursor would not fit: a prompt at the top of
+  /// a screen stays at the top. Following the bottom meanwhile pushed it out of
+  /// sight for the length of the animation, and the resize brought it back.
+  ///
+  /// Only where a resize is coming: without [autoResize] the height never
+  /// reaches the terminal, and the bottom is where its last rows are.
+  double get followOffset {
+    final bottom = _maxScrollExtent;
+    final cell = _painter.cellSize.height;
+    if (!_autoResize || cell <= 0) return bottom;
+    final rows = _viewportHeight ~/ cell;
+    if (rows <= 0 || rows >= _terminal.viewHeight) return bottom;
+    final screenTop = _terminal.buffer.screenTopAfterShrink(rows);
+    // As the resized screen will sit: its last row at the bottom of the view.
+    final offset = (screenTop + rows) * cell - _viewportHeight;
+    return offset.clamp(0.0, bottom);
   }
 
   double get _lineOffset {

@@ -845,7 +845,12 @@ class TerminalViewState extends State<TerminalView>
     // A position not yet laid out has no extent: `maxScrollExtent` asserts one
     // with `!`, and a key typed in that frame threw (SERVERBOX-14B).
     if (position != null && position.hasContentDimensions) {
-      final target = position.maxScrollExtent;
+      // Where a view following the output sits, which is the bottom unless
+      // a keyboard is still sliding: see `followOffset`.
+      final target = renderTerminal.followOffset.clamp(
+        position.minScrollExtent,
+        position.maxScrollExtent,
+      );
       position
           .animateTo(
             target,
@@ -861,9 +866,9 @@ class TerminalViewState extends State<TerminalView>
             WidgetsBinding.instance
               ..addPostFrameCallback((_) {
                 if (!mounted || !position.hasContentDimensions) return;
-                if (position.pixels == target &&
-                    position.maxScrollExtent > target) {
-                  position.jumpTo(position.maxScrollExtent);
+                final follow = renderTerminal.followOffset;
+                if (position.pixels == target && follow > target) {
+                  position.jumpTo(follow);
                 }
               })
               ..scheduleFrame();
