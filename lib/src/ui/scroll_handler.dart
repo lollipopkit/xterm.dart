@@ -39,10 +39,14 @@ class TerminalScrollGestureHandler extends StatefulWidget {
     required this.getCellOffset,
     required this.getLineHeight,
     this.simulateScroll = true,
+    this.readOnly = false,
     required this.child,
   });
 
   final Terminal terminal;
+
+  /// Whether the program is left alone: a scroll it asked for is not sent.
+  final bool readOnly;
 
   /// Returns the cell offset for the pixel offset.
   final CellOffset Function(Offset) getCellOffset;
@@ -132,7 +136,7 @@ class _TerminalScrollGestureHandlerState
         ? lineHeight * 3
         : fromTrackpad
         ? lineHeight
-        : TerminalScrollUnit.pixelsPerLine(widget.terminal.platform) ??
+        : TerminalScrollUnit.pixelsPerLine ??
               lineHeight;
     final lines = _lines.add(dy, pixelsPerLine);
     for (var i = 0; i < lines.abs(); i++) {
@@ -165,7 +169,7 @@ class _TerminalScrollGestureHandlerState
 
   @override
   Widget build(BuildContext context) {
-    if (!_shouldForwardScroll) {
+    if (!_shouldForwardScroll || widget.readOnly) {
       return widget.child;
     }
 
@@ -240,7 +244,7 @@ class TerminalScrollbackHandler extends StatefulWidget {
     required this.child,
   });
 
-  /// The terminal being shown, and the platform it is being shown on.
+  /// The terminal being shown: another one starts with nothing pending.
   final Terminal terminal;
 
   /// The scroll controller of the scrollable this scrolls.
@@ -266,11 +270,32 @@ class _TerminalScrollbackHandlerState extends State<TerminalScrollbackHandler> {
   final _lines = TerminalScrollLines();
 
   @override
+  void didUpdateWidget(covariant TerminalScrollbackHandler oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.terminal != widget.terminal ||
+        oldWidget.controller != widget.controller ||
+        oldWidget.enabled != widget.enabled) {
+      _lines.reset();
+    }
+  }
+
+  /// Whether the scrollback can move the way [dy] asks. At an end the wheel
+  /// is left to whatever scrolls around the terminal, as a scrollable leaves
+  /// it.
+  bool _canScroll(double dy) {
+    if (dy == 0 || !widget.controller.hasClients) return false;
+    final position = widget.controller.position;
+    return dy < 0
+        ? position.pixels > position.minScrollExtent
+        : position.pixels < position.maxScrollExtent;
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Listener(
       onPointerSignal: (event) {
         if (event is! PointerScrollEvent) return;
-        if (!widget.enabled) return;
+        if (!widget.enabled || !_canScroll(event.scrollDelta.dy)) return;
         // The resolver gives a signal to the first listener that asks for it.
         // This is the first one asked — it is inside the scrollable, and the
         // scrollable's own listener is further out — so the scrollable never
@@ -291,7 +316,7 @@ class _TerminalScrollbackHandlerState extends State<TerminalScrollbackHandler> {
     final lineHeight = widget.getLineHeight();
     if (lineHeight <= 0) return;
     final pixelsPerLine =
-        TerminalScrollUnit.pixelsPerLine(widget.terminal.platform) ?? lineHeight;
+        TerminalScrollUnit.pixelsPerLine ?? lineHeight;
     final lines = _lines.add(pixels, pixelsPerLine);
     if (lines == 0 || !widget.controller.hasClients) return;
     widget.controller.position.pointerScroll(lines * lineHeight);

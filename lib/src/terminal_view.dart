@@ -471,6 +471,7 @@ class TerminalViewState extends State<TerminalView>
       simulateScroll: widget.simulateScroll,
       getCellOffset: (offset) => renderTerminal.getScreenCellOffset(offset),
       getLineHeight: () => renderTerminal.lineHeight,
+      readOnly: widget.readOnly,
       child: child,
     );
 

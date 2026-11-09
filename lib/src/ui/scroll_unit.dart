@@ -1,4 +1,4 @@
-import 'package:xterm/src/core/platform.dart';
+import 'package:flutter/foundation.dart';
 
 /// How far a mouse wheel scrolls the terminal, in its lines.
 ///
@@ -9,17 +9,22 @@ import 'package:xterm/src/core/platform.dart';
 /// notch), 53 per notch on Linux. Dividing it back out makes a notch three
 /// lines of the terminal everywhere, and on Windows the lines the system is
 /// set to; an accelerated or high-resolution wheel scrolls in proportion.
+///
+/// The factor is the engine's on the machine running this, whatever platform
+/// the terminal itself says it is.
 abstract final class TerminalScrollUnit {
-  /// The pixels of [platform]'s wheel that make one line of the terminal, or
-  /// null where the engine says nothing about its wheel: a phone's scroll is
-  /// the finger's own pixels.
-  static double? pixelsPerLine(TerminalTargetPlatform platform) =>
-      switch (platform) {
-        TerminalTargetPlatform.macos => 40 / 3,
-        TerminalTargetPlatform.windows => 100 / 3,
-        TerminalTargetPlatform.linux => 53 / 3,
-        _ => null,
-      };
+  /// The pixels of this machine's wheel that make one line of the terminal,
+  /// or null where the engine says nothing about its wheel: a phone's scroll
+  /// is the finger's own pixels, and a browser hands over pixels of its own.
+  static double? get pixelsPerLine {
+    if (kIsWeb) return null;
+    return switch (defaultTargetPlatform) {
+      TargetPlatform.macOS => 40 / 3,
+      TargetPlatform.windows => 100 / 3,
+      TargetPlatform.linux => 53 / 3,
+      _ => null,
+    };
+  }
 }
 
 /// Scrolled pixels gathered into whole lines; what falls short of a line
