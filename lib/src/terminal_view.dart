@@ -401,7 +401,10 @@ class TerminalViewState extends State<TerminalView>
   @override
   Widget build(BuildContext context) {
     Widget child = ScrollConfiguration(
-      behavior: widget.scrollBehavior ?? const _TerminalScrollBehavior(),
+      // The one scrollbar is [hideScrollBar]'s: a desktop behavior adds its
+      // own, which was drawn over it.
+      behavior: (widget.scrollBehavior ?? const _TerminalScrollBehavior())
+          .copyWith(scrollbars: false),
       child: Scrollable(
         key: _scrollableKey,
         controller: _scrollController,
