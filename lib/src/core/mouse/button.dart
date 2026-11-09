@@ -5,6 +5,9 @@ enum TerminalMouseButton {
 
   right(id: 2),
 
+  /// No button: a pointer moving with nothing held, which mode 1003 reports.
+  none(id: 3),
+
   wheelUp(id: 64, isWheel: true),
 
   wheelDown(id: 65, isWheel: true),

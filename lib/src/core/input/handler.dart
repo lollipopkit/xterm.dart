@@ -1,4 +1,5 @@
 import 'package:xterm/src/core/input/keys.dart';
+import 'package:xterm/src/utils/ascii.dart';
 import 'package:xterm/src/core/input/keytab/keytab.dart';
 import 'package:xterm/src/core/state.dart';
 import 'package:xterm/src/core/platform.dart';
@@ -206,7 +207,9 @@ class AltInputHandler implements TerminalInputHandler {
 
     if (key.index >= TerminalKey.keyA.index &&
         key.index <= TerminalKey.keyZ.index) {
-      final charCode = key.index - TerminalKey.keyA.index + 65;
+      // ESC and the letter the key types, which is lower case: ESC A is
+      // Alt with Shift.
+      final charCode = key.index - TerminalKey.keyA.index + Ascii.a;
       final input = [0x1b, charCode];
       return String.fromCharCodes(input);
     }

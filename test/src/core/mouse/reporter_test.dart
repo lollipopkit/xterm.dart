@@ -58,5 +58,41 @@ void main() {
 
       expect(output, equals('\x1B[32;1;1M'));
     });
+
+    test('report() sets bit 5 for a move in every mode', () {
+      String motion(TerminalMouseButton button, MouseReportMode mode) {
+        return MouseReporter.report(
+          button,
+          TerminalMouseButtonState.motion,
+          CellOffset(0, 0),
+          mode,
+        );
+      }
+
+      expect(
+        motion(TerminalMouseButton.left, MouseReportMode.normal),
+        '\x1B[M@!!',
+      );
+      expect(
+        motion(TerminalMouseButton.left, MouseReportMode.utf),
+        '\x1B[M@!!',
+      );
+      expect(
+        motion(TerminalMouseButton.left, MouseReportMode.sgr),
+        '\x1B[<32;1;1M',
+      );
+      expect(
+        motion(TerminalMouseButton.right, MouseReportMode.sgr),
+        '\x1B[<34;1;1M',
+      );
+      expect(
+        motion(TerminalMouseButton.none, MouseReportMode.sgr),
+        '\x1B[<35;1;1M',
+      );
+      expect(
+        motion(TerminalMouseButton.left, MouseReportMode.urxvt),
+        '\x1B[64;1;1M',
+      );
+    });
   });
 }

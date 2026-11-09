@@ -32,6 +32,15 @@ extension ToIndexedValue<T> on T {
 
 void main() {
   group("IndexAwareCircularBuffer", () {
+    test("insertAll that only fills the list trims nothing", () {
+      final cl = IndexAwareCircularBuffer<IndexedValue<String>>(3);
+      cl.pushAll(['a'.indexed, 'b'.indexed]);
+
+      cl.insertAll(1, ['x'.indexed, 'y'.indexed]);
+
+      expect(cl.toList().map((e) => e.value), ['x', 'y', 'b']);
+    });
+
     test("normal creation test", () {
       final cl = IndexAwareCircularBuffer<IndexedValue<int>>(1000);
 

@@ -2,8 +2,10 @@ import 'dart:math' show max;
 import 'dart:ui';
 
 import 'package:flutter/rendering.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/widgets.dart';
 import 'package:xterm/src/core/buffer/cell_offset.dart';
+import 'package:xterm/src/core/buffer/line.dart';
 import 'package:xterm/src/core/buffer/range.dart';
 import 'package:xterm/src/core/buffer/range_line.dart';
 import 'package:xterm/src/core/buffer/segment.dart';
@@ -84,6 +86,8 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
   set autoResize(bool value) {
     if (value == _autoResize) return;
     _autoResize = value;
+    // The viewport may be the size it was, which a layout does not act on.
+    _resizeTerminalIfNeeded();
     markNeedsLayout();
   }
 
@@ -197,6 +201,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
   var _stickToBottom = true;
 
   void _onScroll() {
+    _restoring = false;
     _stickToBottom = _scrollOffset >= _maxScrollExtent;
     markNeedsLayout();
     _notifyEditableRect();
@@ -225,6 +230,13 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     _terminal.addListener(_onTerminalChange);
     _controller.addListener(_onControllerUpdate);
     _focusNode.addListener(_onFocusChange);
+    // A settle dropped while detached; the viewport kept its new size.
+    final cells = _viewportSize;
+    if (cells != null &&
+        (cells.width != _terminal.viewWidth ||
+            cells.height != _terminal.viewHeight)) {
+      _settleHeightLater();
+    }
   }
 
   @override
@@ -263,7 +275,62 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
 
     if (_stickToBottom) {
       _offset.correctBy(_maxScrollExtent - _scrollOffset);
+    } else {
+      _keepTopLine();
     }
+    _rememberTopLine();
+  }
+
+  /// The line at the top of the view and the index it had then. A full
+  /// scrollback drops lines off its front as output arrives, which moves every
+  /// line up while the scroll offset stays put; following this line keeps a
+  /// view scrolled up on the text being read.
+  BufferLine? _topLine;
+  int _topLineIndex = 0;
+
+  /// How far the view was above the bottom, for when its top line is gone.
+  double _bottomDistance = 0;
+
+  /// The view waits for the text replacing a cleared buffer to reach back to
+  /// [_bottomDistance]: a layout before the replay has arrived must not take
+  /// the empty screen for where the view is.
+  bool _restoring = false;
+
+  void _keepTopLine() {
+    final line = _topLine;
+    if (line == null) return;
+    if (!line.attached || _restoring) {
+      // The buffer was cleared under it, as a reset before a replay of the
+      // same text does. What replaces it ends where it ended, while it may
+      // start elsewhere: the view keeps its distance from the bottom.
+      final target = _maxScrollExtent - _bottomDistance;
+      _offset.correctBy(max(0.0, target) - _scrollOffset);
+      _restoring = target < 0;
+      return;
+    }
+    final lines = _terminal.buffer.lines;
+    final index = line.index;
+    // Another buffer's line, after a switch to or from the alternate screen.
+    if (index >= lines.length || !identical(lines[index], line)) return;
+    final moved = index - _topLineIndex;
+    if (moved != 0) {
+      _offset.correctBy(moved * _painter.cellSize.height);
+    }
+  }
+
+  void _rememberTopLine() {
+    final lines = _terminal.buffer.lines;
+    if (lines.length == 0) {
+      _topLine = null;
+      return;
+    }
+    final row = (_scrollOffset ~/ _painter.cellSize.height).clamp(
+      0,
+      lines.length - 1,
+    );
+    _topLine = lines[row];
+    _topLineIndex = row;
+    if (!_restoring) _bottomDistance = _maxScrollExtent - _scrollOffset;
   }
 
   /// Total height of the terminal in pixels. Includes scrollback buffer.
@@ -389,6 +456,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
       _controller.setSelection(
         _terminal.buffer.createAnchorFromOffset(from),
         _terminal.buffer.createAnchorFromOffset(from),
+        mode: SelectionMode.line,
       );
     } else {
       if (to.x >= from.x) {
@@ -397,6 +465,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
       _controller.setSelection(
         _terminal.buffer.createAnchorFromOffset(from),
         _terminal.buffer.createAnchorFromOffset(to),
+        mode: SelectionMode.line,
       );
     }
   }
@@ -418,11 +487,19 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     }
     final start = buffer.createAnchor(0, 0);
     final end = buffer.createAnchor(buffer.viewWidth, buffer.height - 1);
-    _controller.setSelection(start, end);
+    _controller.setSelection(start, end, mode: SelectionMode.line);
   }
 
   void clearSelection() {
     _controller.clearSelection();
+  }
+
+  /// The cell at [offset] counted from the top of the screen rather than of
+  /// the buffer, which is what a mouse report carries. A line in the
+  /// scrollback is above the screen, so its row is negative.
+  CellOffset getScreenCellOffset(Offset offset) {
+    final cell = getCellOffset(offset);
+    return CellOffset(cell.x, cell.y - _terminal.buffer.scrollBack);
   }
 
   /// Send a mouse event at [offset] with [button] being currently in [buttonState].
@@ -431,8 +508,11 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     TerminalMouseButtonState buttonState,
     Offset offset,
   ) {
-    final position = getCellOffset(offset);
-    return _terminal.mouseInput(button, buttonState, position);
+    return _terminal.mouseInput(
+      button,
+      buttonState,
+      getScreenCellOffset(offset),
+    );
   }
 
   void _notifyEditableRect() {
@@ -484,19 +564,71 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
   /// Update the viewport size in cells based on the current widget size in
   /// pixels.
   void _updateViewportSize() {
-    if (size <= _painter.cellSize) {
+    final width = size.width - _padding.horizontal;
+    if (width < _painter.cellSize.width ||
+        _viewportHeight < _painter.cellSize.height) {
       return;
     }
 
     final viewportSize = TerminalSize(
-      size.width ~/ _painter.cellSize.width,
+      width ~/ _painter.cellSize.width,
       _viewportHeight ~/ _painter.cellSize.height,
     );
 
-    if (_viewportSize != viewportSize) {
-      _viewportSize = viewportSize;
+    final previous = _viewportSize;
+    final heightMoved =
+        _laidOutHeight != null && _laidOutHeight != _viewportHeight;
+    _laidOutHeight = _viewportHeight;
+    _viewportSize = viewportSize;
+
+    if (previous == null || previous.width != viewportSize.width) {
       _resizeTerminalIfNeeded();
+      return;
     }
+    // A height that changes frame after frame is an animation, as a soft
+    // keyboard's: each size would reach the program as a SIGWINCH and its
+    // redraw arrive for a size already gone. The view clips to the bottom
+    // meanwhile, and the terminal takes the size the animation ends at.
+    // Pixels, not rows, tell whether it still moves: an eased animation's
+    // first and last frames move less than a row.
+    if (heightMoved) _settleHeightLater();
+  }
+
+  double? _laidOutHeight;
+  bool _heightChanged = false;
+  bool _heightSettling = false;
+
+  void _settleHeightLater() {
+    if (!_autoResize) return;
+    _heightChanged = true;
+    if (_heightSettling) return;
+    _heightSettling = true;
+    SchedulerBinding.instance.addPostFrameCallback(_settleHeight);
+  }
+
+  void _settleHeight(Duration _) {
+    if (!attached) {
+      _heightSettling = false;
+      return;
+    }
+    if (_heightChanged) {
+      // Changed in this frame; one frame more decides whether it goes on.
+      _heightChanged = false;
+      SchedulerBinding.instance
+        ..addPostFrameCallback(_settleHeight)
+        ..scheduleFrame();
+      return;
+    }
+    _heightSettling = false;
+    final cells = _viewportSize;
+    if (cells == null ||
+        (cells.width == _terminal.viewWidth &&
+            cells.height == _terminal.viewHeight)) {
+      return;
+    }
+    // Ahead of the resize, whose callback can throw.
+    markNeedsLayout();
+    _resizeTerminalIfNeeded();
   }
 
   /// Notify the underlying terminal that the viewport size has changed.
@@ -545,7 +677,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
   /// The offset of the cursor from the top left corner of this render object.
   Offset get cursorOffset {
     return Offset(
-      _terminal.buffer.cursorX * _painter.cellSize.width,
+      _terminal.buffer.cursorX * _painter.cellSize.width + _padding.left,
       _terminal.buffer.absoluteCursorY * _painter.cellSize.height + _lineOffset,
     );
   }
@@ -578,7 +710,10 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     for (var i = effectFirstLine; i <= effectLastLine; i++) {
       _painter.paintLine(
         canvas,
-        offset.translate(0, (i * charHeight + _lineOffset).truncateToDouble()),
+        offset.translate(
+          _padding.left,
+          (i * charHeight + _lineOffset).truncateToDouble(),
+        ),
         lines[i],
         reverseDisplay: _terminal.reverseDisplayMode,
       );
@@ -742,7 +877,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     final endX = end ?? (segment.end ?? _terminal.viewWidth).toDouble();
 
     final startOffset = Offset(
-      startX * _painter.cellSize.width,
+      startX * _painter.cellSize.width + _padding.left,
       segment.line * _painter.cellSize.height + _lineOffset,
     );
 

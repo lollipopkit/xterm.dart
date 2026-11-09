@@ -8,8 +8,6 @@ import 'package:xterm/src/core/buffer/cell_offset.dart';
 import 'package:xterm/src/core/buffer/range.dart';
 import 'package:xterm/src/core/cursor_type.dart';
 import 'package:xterm/src/core/input/keys.dart';
-import 'package:xterm/src/core/mouse/button.dart';
-import 'package:xterm/src/core/mouse/button_state.dart';
 import 'package:xterm/src/core/mouse/mode.dart';
 import 'package:xterm/src/terminal.dart';
 import 'package:xterm/src/ui/controller.dart';
@@ -64,6 +62,8 @@ class TerminalView extends StatefulWidget {
     this.onCopied,
     this.onSelectAll,
     this.onPaste,
+    this.onPasteText,
+    this.onCopyFailed,
   });
 
   /// The underlying terminal that this widget renders.
@@ -186,6 +186,15 @@ class TerminalView extends StatefulWidget {
 
   /// Callback to paste text from clipboard to terminal.
   final void Function()? onPaste;
+
+  /// What the iOS system menu's paste brought in, which iOS gives without
+  /// asking the user (a read through [onPaste] asks every time). Defaults to
+  /// pasting into the terminal, bracketed when the program asked for that.
+  final void Function(String text)? onPasteText;
+
+  /// A copy the clipboard refused: the selection stays, and nothing else says
+  /// so unless this does.
+  final void Function(Object error, StackTrace stack)? onCopyFailed;
 
   @override
   State<TerminalView> createState() => TerminalViewState();
@@ -322,6 +331,10 @@ class TerminalViewState extends State<TerminalView>
       _prevIsAltBuffer = widget.terminal.isUsingAltBuffer;
       _prevMouseMode = widget.terminal.mouseMode;
       _updateCursorBlink(resetVisible: true);
+      // Anchored in the old terminal's buffer, so it means nothing here.
+      if (oldWidget.controller == widget.controller) {
+        _controller.clearSelection();
+      }
     }
     if (oldWidget.controller != widget.controller) {
       // The selection listener moves with the controller: left on the old one
@@ -453,7 +466,7 @@ class TerminalViewState extends State<TerminalView>
     child = TerminalScrollGestureHandler(
       terminal: widget.terminal,
       simulateScroll: widget.simulateScroll,
-      getCellOffset: (offset) => renderTerminal.getCellOffset(offset),
+      getCellOffset: (offset) => renderTerminal.getScreenCellOffset(offset),
       getLineHeight: () => renderTerminal.lineHeight,
       child: child,
     );
@@ -490,7 +503,20 @@ class TerminalViewState extends State<TerminalView>
         getSelectedText: () => renderTerminal.selectedText ?? '',
         onCopied: widget.onCopied,
         onSelectAll: widget.onSelectAll ?? () => renderTerminal.selectAll(),
-        onPaste: widget.onPaste,
+        // The clipboard goes to the terminal, as the paste shortcut sends it,
+        // and not into the text being composed, which held it until the
+        // next key went out with it.
+        onPaste:
+            widget.onPaste ??
+            (widget.readOnly
+                ? null
+                : () => pasteClipboard(widget.terminal, _controller)),
+        onPasteText: widget.readOnly
+            ? null
+            : widget.onPasteText ??
+                  (text) => pasteText(widget.terminal, _controller, text),
+        selectionRect: _selectionRect,
+        onCopyFailed: widget.onCopyFailed,
         child: child,
       );
     } else if (!widget.readOnly) {
@@ -539,7 +565,9 @@ class TerminalViewState extends State<TerminalView>
       child: child,
     );
 
-    return child;
+    // A terminal's grid runs left to right whatever the app's language: in a
+    // right-to-left locale the selection handles were mirrored against it.
+    return Directionality(textDirection: TextDirection.ltr, child: child);
   }
 
   void requestKeyboard() {
@@ -554,6 +582,35 @@ class TerminalViewState extends State<TerminalView>
     _focusNode.unfocus();
     _customTextEditKey.currentState?.closeKeyboard();
   }
+
+  /// The selection's bounds on screen, cut to what is visible: a whole
+  /// buffer selected is anchored to the rows in view.
+  Rect? _selectionRect() {
+    final selection = _controller.selection;
+    if (selection == null || selection.isCollapsed) return null;
+    final render = renderTerminal;
+    if (!render.hasSize) return null;
+    final range = selection.normalized;
+    final cell = render.cellSize;
+    final begin = render.getOffset(range.begin);
+    final end = render.getOffset(range.end);
+    // Over more than one row it spans them: a row is selected to its end.
+    final oneRow = range.begin.y == range.end.y;
+    final local = Rect.fromLTRB(
+      oneRow ? begin.dx : 0,
+      begin.dy,
+      oneRow ? end.dx : render.size.width,
+      end.dy + cell.height,
+    ).intersect(Offset.zero & render.size);
+    if (local.width <= 0 || local.height <= 0) return null;
+    return MatrixUtils.transformRect(render.getTransformTo(null), local);
+  }
+
+  /// Copies the selection, as the menu's Copy does: `onCopied` once the
+  /// clipboard has it, `onCopyFailed` when it refused.
+  void copySelection() => _customTextEditKey.currentState?.copySelection(
+    SelectionChangedCause.keyboard,
+  );
 
   void showSelectionToolbar(Rect globalSelectionRect) {
     _customTextEditKey.currentState?.showToolbar(
@@ -652,11 +709,6 @@ class TerminalViewState extends State<TerminalView>
   void _onTapUp(TapUpDetails details) {
     final offset = renderTerminal.getCellOffset(details.localPosition);
     widget.onTapUp?.call(details, offset);
-    widget.terminal.mouseInput(
-      TerminalMouseButton.left,
-      TerminalMouseButtonState.up,
-      offset,
-    );
   }
 
   void _onTapDown(TapDownDetails details) {
@@ -669,12 +721,6 @@ class TerminalViewState extends State<TerminalView>
     }
 
     _updateCursorBlink(resetVisible: true);
-
-    widget.terminal.mouseInput(
-      TerminalMouseButton.left,
-      TerminalMouseButtonState.down,
-      renderTerminal.getCellOffset(details.localPosition),
-    );
   }
 
   void _onSecondaryTapDown(TapDownDetails details) {
@@ -741,13 +787,33 @@ class TerminalViewState extends State<TerminalView>
       return KeyEventResult.ignored;
     }
 
-    final handled = _sendTerminalKey(key);
+    final handled = _sendTerminalKey(key) || _sendAltCharacter(event);
 
     if (!handled) {
       return KeyEventResult.ignored;
     }
 
     return KeyEventResult.handled;
+  }
+
+  /// Alt with a key that types a character the keytab has no entry for, a
+  /// period for one: ESC and the character. Left alone it was typed without
+  /// the Alt. Not with Control, which AltGr on Windows is.
+  bool _sendAltCharacter(KeyEvent event) {
+    final keyboard = HardwareKeyboard.instance;
+    if (!keyboard.isAltPressed ||
+        keyboard.isControlPressed ||
+        keyboard.isMetaPressed) {
+      return false;
+    }
+    final character = event.character;
+    if (character == null || character.runes.length != 1) return false;
+    if (!widget.terminal.charInput(character.runes.single, alt: true)) {
+      return false;
+    }
+    _scrollToBottom();
+    _updateCursorBlink(resetVisible: true);
+    return true;
   }
 
   bool _sendTerminalKey(TerminalKey key) {
@@ -775,11 +841,29 @@ class TerminalViewState extends State<TerminalView>
     // A position not yet laid out has no extent: `maxScrollExtent` asserts one
     // with `!`, and a key typed in that frame threw (SERVERBOX-14B).
     if (position != null && position.hasContentDimensions) {
-      position.animateTo(
-        position.maxScrollExtent,
-        duration: const Duration(milliseconds: 377),
-        curve: Curves.fastEaseInToSlowEaseOut,
-      );
+      final target = position.maxScrollExtent;
+      position
+          .animateTo(
+            target,
+            duration: const Duration(milliseconds: 377),
+            curve: Curves.fastEaseInToSlowEaseOut,
+          )
+          .then((_) {
+            // Output during the animation moved the bottom past where it was
+            // going. Caught up after the next layout, which is what applies
+            // that output to the extent; not when something else (a drag)
+            // stopped the animation short.
+            if (!mounted) return;
+            WidgetsBinding.instance
+              ..addPostFrameCallback((_) {
+                if (!mounted || !position.hasContentDimensions) return;
+                if (position.pixels == target &&
+                    position.maxScrollExtent > target) {
+                  position.jumpTo(position.maxScrollExtent);
+                }
+              })
+              ..scheduleFrame();
+          });
     }
   }
 

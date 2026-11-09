@@ -46,18 +46,20 @@ class Keytab {
         if (ctrl != false || alt != false || shift != false) {
           continue;
         }
-      } else {
-        if (record.ctrl != null && record.ctrl != ctrl) {
-          continue;
-        }
+      }
 
-        if (record.shift != null && record.shift != shift) {
-          continue;
-        }
+      // Alongside AnyMod as well: `-Shift+AnyMod` is any modifier but shift,
+      // and taking it for any modifier at all sent Shift+Up as Ctrl+Up.
+      if (record.ctrl != null && record.ctrl != ctrl) {
+        continue;
+      }
 
-        if (record.alt != null && record.alt != alt) {
-          continue;
-        }
+      if (record.shift != null && record.shift != shift) {
+        continue;
+      }
+
+      if (record.alt != null && record.alt != alt) {
+        continue;
       }
 
       if (record.newLine != null && record.newLine != newLineMode) {

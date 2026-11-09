@@ -274,10 +274,11 @@ class IndexAwareCircularBuffer<T extends IndexedItem> {
     RangeError.checkValueInInterval(index, 0, _length, 'index');
 
     for (var i = items.length - 1; i >= 0; i--) {
+      final wasFull = isFull;
       insert(index, items[i]);
-      // when the list is full then we have to move the index down
-      // as newly inserted values remove values with a lower index
-      if (_length >= _array.length) {
+      // An insert into a full list trims its first value, which moves the
+      // values before the index down. One that only fills it trims nothing.
+      if (wasFull) {
         index--;
         if (index < 0) {
           return;

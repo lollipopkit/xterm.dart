@@ -102,6 +102,85 @@ void main() {
 
     expect(find.byType(TextSelectionToolbar), findsNothing);
   });
+
+  testWidgets('a long press on nothing puts up a menu to paste from', (
+    tester,
+  ) async {
+    // How a touch screen pastes. It used to put up nothing, so paste was only
+    // reachable by pressing on a word, and a cleared screen had none.
+    final harness = await _pump(tester);
+
+    await harness.longPressAt(30, 2);
+
+    expect(find.byType(TextSelectionToolbar), findsOneWidget);
+    expect(find.text('Paste'), findsOneWidget);
+    expect(find.text('Copy'), findsNothing);
+    // Not the one cell the press took: it is nothing to copy, and a selection
+    // left behind is what a secondary click copies instead of pasting.
+    expect(harness.controller.selection, isNull);
+
+    await tester.tap(find.text('Paste'));
+    await tester.pump();
+
+    expect(find.byType(TextSelectionToolbar), findsNothing);
+  });
+
+  testWidgets('a tap puts the paste menu away', (tester) async {
+    final harness = await _pump(tester);
+
+    await harness.longPressAt(30, 2);
+    expect(find.byType(TextSelectionToolbar), findsOneWidget);
+
+    await tester.tapAt(harness.offsetOf(30, 20));
+    await tester.pump(kDoubleTapTimeout);
+
+    expect(find.byType(TextSelectionToolbar), findsNothing);
+  });
+
+  testWidgets('a held mouse button on nothing puts up no menu', (tester) async {
+    // A mouse has a secondary click for that.
+    final harness = await _pump(tester);
+
+    await harness.longPressAt(30, 2, kind: PointerDeviceKind.mouse);
+
+    expect(find.byType(TextSelectionToolbar), findsNothing);
+  });
+
+  testWidgets('a long press near a handle does not stop the next one', (
+    tester,
+  ) async {
+    // A press within reach of a handle arms it, and when the press becomes a
+    // long press the tap-up that disarms it never comes. Every long press
+    // after that returned at once, wherever it landed, so the menu was gone
+    // until a tap: what ServerBox #1795 reports.
+    final harness = await _pump(tester);
+    harness.terminal.write('\r\nalpha beta gamma' * 4);
+    await tester.pump();
+
+    await harness.longPressAt(7, 0);
+    expect(find.byType(TextSelectionToolbar), findsOneWidget);
+    // Put away by something other than a tap, as typing does, which leaves
+    // the selection and its handles.
+    harness.view.hideSelectionToolbar();
+    await tester.pump();
+
+    // Just under the selected word, where its handles hang.
+    await harness.longPressAt(7, 1);
+    expect(
+      find.byType(TextSelectionToolbar),
+      findsOneWidget,
+      reason: 'a press on the selection asks for its menu',
+    );
+    harness.view.hideSelectionToolbar();
+    await tester.pump();
+
+    await harness.longPressAt(7, 3);
+
+    final selection = harness.controller.selection!;
+    expect(harness.terminal.buffer.getText(selection).trim(), 'beta');
+    expect(selection.begin.y, 3);
+    expect(find.byType(TextSelectionToolbar), findsOneWidget);
+  });
 }
 
 Future<_Harness> _pump(WidgetTester tester) async {
@@ -134,13 +213,35 @@ class _Harness {
 
   TerminalViewState get view => key.currentState!;
 
-  Future<void> doubleTapAt(int column) async {
+  /// The centre of cell [column], [row] in global coordinates.
+  Offset offsetOf(int column, [int row = 0]) {
     final topLeft = tester.getTopLeft(find.byType(TerminalView));
     final render = tester.renderObject(find.byType(TerminalView));
     final cellWidth = render.paintBounds.width / terminal.viewWidth;
     final cellHeight = render.paintBounds.height / terminal.viewHeight;
-    final position =
-        topLeft + Offset((column + 0.5) * cellWidth, 0.5 * cellHeight);
+    return topLeft +
+        Offset((column + 0.5) * cellWidth, (row + 0.5) * cellHeight);
+  }
+
+  /// A long press and its release, then long enough that the next press
+  /// starts a run of its own.
+  Future<void> longPressAt(
+    int column,
+    int row, {
+    PointerDeviceKind kind = PointerDeviceKind.touch,
+  }) async {
+    final gesture = await tester.startGesture(
+      offsetOf(column, row),
+      kind: kind,
+    );
+    await tester.pump(kLongPressTimeout + const Duration(milliseconds: 1));
+    await gesture.up();
+    await tester.pump();
+    await tester.pump(kDoubleTapTimeout);
+  }
+
+  Future<void> doubleTapAt(int column) async {
+    final position = offsetOf(column);
 
     for (var i = 0; i < 2; i++) {
       final gesture = await tester.startGesture(

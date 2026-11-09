@@ -2,6 +2,7 @@ import 'package:xterm/src/core/buffer/cell_offset.dart';
 import 'package:xterm/src/core/mouse/button_state.dart';
 import 'package:xterm/src/core/mouse/mode.dart';
 import 'package:xterm/src/core/mouse/button.dart';
+import 'package:xterm/src/core/mouse/modifiers.dart';
 import 'package:xterm/src/core/mouse/reporter.dart';
 import 'package:xterm/src/core/platform.dart';
 import 'package:xterm/src/core/state.dart';
@@ -22,18 +23,23 @@ class TerminalMouseEvent {
   /// The platform of the terminal.
   final TerminalTargetPlatform platform;
 
+  /// The keys held during the event.
+  final TerminalMouseModifiers modifiers;
+
   TerminalMouseEvent({
     required this.button,
     required this.buttonState,
     required this.position,
     required this.state,
     required this.platform,
+    this.modifiers = TerminalMouseModifiers.none,
   });
 }
 
 const defaultMouseHandler = CascadeMouseHandler([
   ClickMouseHandler(),
   UpDownMouseHandler(),
+  MotionMouseHandler(),
 ]);
 
 abstract class TerminalMouseHandler {
@@ -74,6 +80,7 @@ class ClickMouseHandler implements TerminalMouseHandler {
             event.buttonState,
             event.position,
             event.state.mouseReportMode,
+            modifiers: event.modifiers,
           );
         }
         return null;
@@ -98,9 +105,11 @@ class UpDownMouseHandler implements TerminalMouseHandler {
       case MouseMode.upDownScroll:
       case MouseMode.upDownScrollDrag:
       case MouseMode.upDownScrollMove:
-        // Up events are never reported for mouse wheel buttons.
-        if (event.button.isWheel &&
-            event.buttonState == TerminalMouseButtonState.up) {
+        // Moves are [MotionMouseHandler]'s, and up events are never reported
+        // for mouse wheel buttons.
+        if (event.buttonState == TerminalMouseButtonState.motion ||
+            (event.button.isWheel &&
+                event.buttonState == TerminalMouseButtonState.up)) {
           return null;
         }
         return MouseReporter.report(
@@ -108,7 +117,40 @@ class UpDownMouseHandler implements TerminalMouseHandler {
           event.buttonState,
           event.position,
           event.state.mouseReportMode,
+          modifiers: event.modifiers,
         );
     }
+  }
+}
+
+/// Moves: with a button held in mode 1002, and any move in mode 1003.
+class MotionMouseHandler implements TerminalMouseHandler {
+  const MotionMouseHandler();
+
+  @override
+  String? call(TerminalMouseEvent event) {
+    if (event.buttonState != TerminalMouseButtonState.motion) {
+      return null;
+    }
+    switch (event.state.mouseMode) {
+      case MouseMode.none:
+      case MouseMode.clickOnly:
+      case MouseMode.upDownScroll:
+        return null;
+      case MouseMode.upDownScrollDrag:
+        if (event.button == TerminalMouseButton.none) {
+          return null;
+        }
+        break;
+      case MouseMode.upDownScrollMove:
+        break;
+    }
+    return MouseReporter.report(
+      event.button,
+      event.buttonState,
+      event.position,
+      event.state.mouseReportMode,
+      modifiers: event.modifiers,
+    );
   }
 }

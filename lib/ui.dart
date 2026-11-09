@@ -4,6 +4,7 @@ export 'src/ui/cursor_type.dart';
 export 'src/ui/pointer_input.dart';
 export 'src/ui/scroll_unit.dart';
 export 'src/ui/selection_mode.dart';
+export 'src/ui/shortcut/actions.dart' show pasteClipboard;
 export 'src/ui/shortcut/shortcuts.dart';
 export 'src/ui/terminal_text_style.dart';
 export 'src/ui/terminal_theme.dart';

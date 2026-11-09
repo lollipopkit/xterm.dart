@@ -204,6 +204,12 @@ class BufferLine with IndexedItem {
     for (var i = start; i < end; i++) {
       eraseCell(i, style);
     }
+
+    // Erased to the end, so the cells a shrink hid are erased too: growing
+    // the line again must not bring back what was cleared.
+    if (end == _length) {
+      _data.fillRange(_length * _cellSize, _data.length, 0);
+    }
   }
 
   /// Remove [count] cells starting at [start]. Cells that are empty after the
@@ -308,7 +314,11 @@ class BufferLine with IndexedItem {
     }
   }
 
-  void resize(int length) {
+  /// Sets the number of cells. Shrinking keeps the cells that fall off the
+  /// end; growing brings them back only with [keepHidden], which is what a
+  /// terminal without reflow does. Otherwise they are blank: after a reflow
+  /// they are text that moved to the next line.
+  void resize(int length, {bool keepHidden = false}) {
     assert(length >= 0);
 
     if (length == _length) {
@@ -322,6 +332,10 @@ class BufferLine with IndexedItem {
         final newBuffer = Uint32List(newBufferSize);
         newBuffer.setRange(0, _data.length, _data);
         _data = newBuffer;
+      }
+
+      if (!keepHidden) {
+        _data.fillRange(_length * _cellSize, length * _cellSize, 0);
       }
     }
 

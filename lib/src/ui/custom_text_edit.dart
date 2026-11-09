@@ -6,7 +6,6 @@ import 'package:material_ui/material_ui.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
-import 'package:xterm/src/ui/shortcut/shortcuts.dart';
 
 /// Builds customized context menu entries for the text selection toolbar.
 ///
@@ -72,6 +71,18 @@ class CustomTextEdit extends StatefulWidget {
   /// Callback to paste text from clipboard to terminal.
   final void Function()? onPaste;
 
+  /// Receives what the system menu's paste (iOS) put in, which reaches this
+  /// widget as typed input. Without it, that menu reads the clipboard through
+  /// [onPaste], and iOS asks the user before every read.
+  final void Function(String text)? onPasteText;
+
+  /// Where the selection is now, in global coordinates, for a menu put back
+  /// after select all: over what is selected, not where it was asked for.
+  final Rect? Function()? selectionRect;
+
+  /// A copy the clipboard refused. Nothing changes on screen otherwise.
+  final void Function(Object error, StackTrace stack)? onCopyFailed;
+
   CustomTextEdit({
     super.key,
     required this.child,
@@ -98,6 +109,9 @@ class CustomTextEdit extends StatefulWidget {
     this.onCopied,
     this.onSelectAll,
     this.onPaste,
+    this.onPasteText,
+    this.selectionRect,
+    this.onCopyFailed,
   });
 
   @override
@@ -106,8 +120,70 @@ class CustomTextEdit extends StatefulWidget {
 
 class CustomTextEditState extends State<CustomTextEdit>
     with TextInputClient, TextSelectionDelegate {
+  /// The terminal holding the input connection, the one a platform paste
+  /// lands in.
+  static CustomTextEditState? _attached;
+
+  /// Whether the platform has told [expectPaste] of a paste. From then on it
+  /// is trusted to tell of every one, and an insert while the system menu
+  /// offers paste is no longer guessed to be its paste.
+  static bool pasteSignalled = false;
+
+  /// The platform is about to insert [text], the clipboard, as typed text into
+  /// the attached terminal (iOS: the app's `sendAction` hook).
+  static void expectPaste(String text) {
+    pasteSignalled = true;
+    _attached?._expectPaste(text);
+  }
+
+  String? _expectedPaste;
+  Timer? _pasteExpiry;
+
+  void _expectPaste(String text) {
+    _expectedPaste = text;
+    _pasteExpiry?.cancel();
+    // The insert follows on the same turn of the platform; one that never
+    // comes must not leave the text waiting to be matched.
+    _pasteExpiry = Timer(const Duration(seconds: 1), _clearPaste);
+  }
+
+  void _clearPaste() {
+    _pasteExpiry?.cancel();
+    _pasteExpiry = null;
+    _expectedPaste = null;
+  }
+
+  /// Sends what [typed] holds of an expected paste as that paste, and what
+  /// came before it (a composition the paste committed) as typing. False when
+  /// it does not end with the paste: some other update, which leaves the paste
+  /// still expected.
+  bool _takePaste(String typed) {
+    final paste = _expectedPaste;
+    if (paste == null || paste.isEmpty || !typed.endsWith(paste)) return false;
+    _clearPaste();
+    final before = typed.substring(0, typed.length - paste.length);
+    if (before.isNotEmpty) widget.onInsert(before);
+    (widget.onPasteText ?? widget.onInsert)(paste);
+    return true;
+  }
+
   TextInputConnection? _connection;
   final ContextMenuController _menuController = ContextMenuController();
+
+  /// The iOS edit menu, used instead of [_menuController] where it is
+  /// supported. Created when first shown: creating one takes the platform's
+  /// menu events away from any other.
+  SystemContextMenuController? _systemMenu;
+  bool _systemMenuShown = false;
+
+  /// Whether the system menu on screen offers paste. Its paste goes to the
+  /// platform view, which inserts the clipboard as typed text before the menu
+  /// is reported gone; an insert while this holds is that text.
+  bool _systemMenuOffersPaste = false;
+
+  /// Where to put the system menu back once the platform has put it away:
+  /// after select all, which leaves a selection to copy.
+  Rect? _systemMenuReshowRect;
   final ClipboardStatusNotifier _clipboardStatus = ClipboardStatusNotifier();
   TextSelectionToolbarAnchors? _toolbarAnchors;
 
@@ -226,6 +302,7 @@ class CustomTextEditState extends State<CustomTextEdit>
     _disposeController();
     _closeInputConnectionIfNeeded();
     _menuController.remove();
+    _systemMenu?.dispose();
     _clipboardStatus.removeListener(_handleClipboardStatusChanged);
     _clipboardStatus.dispose();
     super.dispose();
@@ -233,9 +310,10 @@ class CustomTextEditState extends State<CustomTextEdit>
 
   @override
   Widget build(BuildContext context) {
-    return Shortcuts(
-      shortcuts: defaultTerminalShortcuts,
-      child: Actions(
+    // No shortcuts of its own: the view's, which the host can replace, reach
+    // these actions through [onKeyEvent], and a second set here took keys
+    // the host had left out of its map.
+    return Actions(
         actions: <Type, Action<Intent>>{
           CopySelectionTextIntent: CallbackAction<CopySelectionTextIntent>(
             onInvoke: (intent) {
@@ -250,12 +328,11 @@ class CustomTextEditState extends State<CustomTextEdit>
             onInvoke: (intent) => selectAll(intent.cause),
           ),
         },
-        child: Focus(
-          focusNode: widget.focusNode,
-          autofocus: widget.autofocus,
-          onKeyEvent: _onKeyEvent,
-          child: widget.child,
-        ),
+      child: Focus(
+        focusNode: widget.focusNode,
+        autofocus: widget.autofocus,
+        onKeyEvent: _onKeyEvent,
+        child: widget.child,
       ),
     );
   }
@@ -353,9 +430,7 @@ class CustomTextEditState extends State<CustomTextEdit>
 
   void _onFocusChange() {
     _openOrCloseInputConnectionIfNeeded();
-    if (!widget.focusNode.hasFocus && _menuController.isShown) {
-      _menuController.remove();
-    }
+    if (!widget.focusNode.hasFocus) hideToolbar();
   }
 
   KeyEventResult _onKeyEvent(FocusNode focusNode, KeyEvent event) {
@@ -411,15 +486,24 @@ class CustomTextEditState extends State<CustomTextEdit>
       _connection = null;
       return;
     }
+    _attached = this;
     _connection!.show();
     _connection!.setEditingState(_currentEditingState);
   }
 
   void _closeInputConnectionIfNeeded() {
+    // The system menu belongs to the connection's platform view.
+    if (_systemMenuShown) hideToolbar();
     if (hasInputConnection) {
       _connection!.close();
       _connection = null;
     }
+    _detach();
+  }
+
+  void _detach() {
+    if (_attached == this) _attached = null;
+    _clearPaste();
   }
 
   TextEditingValue _getInitialEditingValue() {
@@ -467,6 +551,17 @@ class CustomTextEditState extends State<CustomTextEdit>
     if (widget.onComposingChanged != null &&
         oldValue.composing != value.composing) {
       widget.onComposingChanged!(value.composing);
+    }
+
+    // Before the composing branch: a paste over marked text ends it.
+    if (_expectedPaste != null &&
+        _currentEditingState.composing.isCollapsed &&
+        _takePaste(_typed(_currentEditingState.text))) {
+      if (!oldValue.composing.isCollapsed) widget.onComposing(null);
+      _currentEditingState = _initEditingState.copyWith();
+      _connection?.setEditingState(_currentEditingState);
+      _showCaretOnScreen();
+      return;
     }
 
     if (!_currentEditingState.composing.isCollapsed) {
@@ -574,6 +669,15 @@ class CustomTextEditState extends State<CustomTextEdit>
     if (textDelta.isEmpty) {
       return false;
     }
+    final onPasteText = widget.onPasteText;
+    if (!pasteSignalled &&
+        _systemMenuShown &&
+        _systemMenuOffersPaste &&
+        onPasteText != null) {
+      _systemMenuOffersPaste = false;
+      onPasteText(textDelta);
+      return true;
+    }
     widget.onInsert(textDelta);
     return true;
   }
@@ -611,6 +715,8 @@ class CustomTextEditState extends State<CustomTextEdit>
     if (_connection != null) {
       _connection = null;
     }
+    _detach();
+    _resetSystemMenu();
   }
 
   @override
@@ -666,6 +772,10 @@ class CustomTextEditState extends State<CustomTextEdit>
     if (_menuController.isShown) {
       _menuController.remove();
     }
+    if (_systemMenuShown) {
+      _resetSystemMenu();
+      unawaited(_systemMenu?.hide());
+    }
     _toolbarAnchors = null;
     // Or a menu dismissed while the clipboard was still being asked about
     // would come back on its own when the answer landed.
@@ -674,7 +784,7 @@ class CustomTextEditState extends State<CustomTextEdit>
     // EditableText manages its own handles.
   }
 
-  bool get isToolbarShown => _menuController.isShown;
+  bool get isToolbarShown => _menuController.isShown || _systemMenuShown;
 
   @override
   void showToolbar({Rect? globalSelectionRect}) {
@@ -686,6 +796,15 @@ class CustomTextEditState extends State<CustomTextEdit>
         globalSelectionRect ?? (_caretRect == Rect.zero ? null : _caretRect);
 
     if (anchorRect == null) {
+      return;
+    }
+
+    // The platform's own menu where there is one: its paste is the user's, so
+    // iOS lets it read the clipboard without asking. It is shown by the
+    // platform view of the input connection, so not while there is none
+    // (the keyboard put away).
+    if (hasInputConnection && SystemContextMenu.isSupported(context)) {
+      _showSystemMenu(anchorRect);
       return;
     }
 
@@ -767,6 +886,82 @@ class CustomTextEditState extends State<CustomTextEdit>
     );
   }
 
+  void _showSystemMenu(Rect anchorRect) {
+    // Paste is offered whatever the clipboard holds: the platform leaves it
+    // out when there is no text, and asking first is a read iOS reports.
+    final items = _buildContextMenuButtonItems(
+      clipboardStatus: ClipboardStatus.pasteable,
+    );
+    if (items.isEmpty) {
+      hideToolbar();
+      return;
+    }
+    final l10n = MaterialLocalizations.of(context);
+    var offersPaste = false;
+    final data = <IOSSystemContextMenuItemData>[];
+    for (final item in items) {
+      final onPressed = item.onPressed;
+      if (onPressed == null) continue;
+      // Copy and select all stay this widget's: the platform's would act on
+      // the input connection's placeholder text, not the terminal.
+      // Only this widget's own paste: one a toolbar builder put in its place
+      // is the host's to run.
+      if (onPressed == _pasteFromToolbar && widget.onPasteText != null) {
+        offersPaste = true;
+        data.add(const IOSSystemContextMenuItemDataPaste());
+      } else {
+        data.add(
+          IOSSystemContextMenuItemDataCustom(
+            title: _buttonLabel(l10n, item),
+            onPressed: () {
+              // The platform is putting the menu away already; hiding it
+              // again from the action would leave its dismissal no one to
+              // reach.
+              _resetSystemMenu();
+              if (item.type == ContextMenuButtonType.selectAll) {
+                _systemMenuReshowRect = anchorRect;
+              }
+              onPressed();
+            },
+          ),
+        );
+      }
+    }
+    if (data.isEmpty) {
+      hideToolbar();
+      return;
+    }
+    _pendingToolbarRect = null;
+    if (_menuController.isShown) _menuController.remove();
+    final menu = _systemMenu ??= SystemContextMenuController(
+      onSystemHide: _onSystemMenuHidden,
+    );
+    _systemMenuShown = true;
+    _systemMenuOffersPaste = offersPaste;
+    unawaited(menu.showWithItems(anchorRect, data));
+  }
+
+  void _onSystemMenuHidden() {
+    _systemMenuShown = false;
+    _systemMenuOffersPaste = false;
+    final reshow = _systemMenuReshowRect;
+    _systemMenuReshowRect = null;
+    if (reshow == null) return;
+    SchedulerBinding.instance.addPostFrameCallback((_) {
+      if (mounted && widget.focusNode.hasFocus) {
+        showToolbar(
+          globalSelectionRect: widget.selectionRect?.call() ?? reshow,
+        );
+      }
+    });
+  }
+
+  void _resetSystemMenu() {
+    _systemMenuShown = false;
+    _systemMenuOffersPaste = false;
+    _systemMenuReshowRect = null;
+  }
+
   /// The selection toolbar, in Material on every platform.
   ///
   /// [AdaptiveTextSelectionToolbar] would give a Cupertino one on iOS and
@@ -788,7 +983,9 @@ class CustomTextEditState extends State<CustomTextEdit>
             padding: TextSelectionToolbarTextButton.getPadding(i, items.length),
             onPressed: items[i].onPressed,
             alignment: AlignmentDirectional.centerStart,
-            child: Text(_buttonLabel(context, items[i])),
+            child: Text(
+              _buttonLabel(MaterialLocalizations.of(context), items[i]),
+            ),
           ),
       ],
     );
@@ -798,13 +995,11 @@ class CustomTextEditState extends State<CustomTextEdit>
   ///
   /// Switched over exhaustively rather than defaulted, so that a button type
   /// added to Flutter is a compile error here instead of an empty button.
-  String _buttonLabel(BuildContext context, ContextMenuButtonItem item) {
+  String _buttonLabel(MaterialLocalizations l10n, ContextMenuButtonItem item) {
     final label = item.label;
     if (label != null) {
       return label;
     }
-
-    final l10n = MaterialLocalizations.of(context);
 
     return switch (item.type) {
       ContextMenuButtonType.cut => l10n.cutButtonLabel,
@@ -841,16 +1036,16 @@ class CustomTextEditState extends State<CustomTextEdit>
     setState(() {});
   }
 
-  List<ContextMenuButtonItem> _buildContextMenuButtonItems() {
+  List<ContextMenuButtonItem> _buildContextMenuButtonItems({
+    ClipboardStatus? clipboardStatus,
+  }) {
     final defaultItems = EditableText.getEditableButtonItems(
-      clipboardStatus: _clipboardStatus.value,
+      clipboardStatus: clipboardStatus ?? _clipboardStatus.value,
       onCopy: copyEnabled
           ? () => copySelection(SelectionChangedCause.toolbar)
           : null,
       onCut: null,
-      onPaste: pasteEnabled
-          ? () => pasteText(SelectionChangedCause.toolbar)
-          : null,
+      onPaste: pasteEnabled ? _pasteFromToolbar : null,
       onSelectAll: selectAllEnabled
           ? () => selectAll(SelectionChangedCause.toolbar)
           : null,
@@ -880,7 +1075,7 @@ class CustomTextEditState extends State<CustomTextEdit>
   }
 
   @override
-  bool get pasteEnabled => widget.onPaste != null || !widget.readOnly;
+  bool get pasteEnabled => widget.onPaste != null;
 
   @override
   bool get cutEnabled => false;
@@ -920,65 +1115,49 @@ class CustomTextEditState extends State<CustomTextEdit>
       (_) {
         if (mounted) widget.onCopied?.call();
       },
-      onError: (Object _) {},
+      onError: (Object e, StackTrace s) {
+        if (mounted) widget.onCopyFailed?.call(e, s);
+      },
     );
 
     if (cause == SelectionChangedCause.toolbar) {
       hideToolbar();
     }
   }
+
+  void _pasteFromToolbar() =>
+      unawaited(pasteText(SelectionChangedCause.toolbar));
 
   @override
   Future<void> pasteText(SelectionChangedCause cause) async {
     if (!pasteEnabled) {
       return;
     }
-    
-    if (widget.onPaste != null) {
-      widget.onPaste!();
-      if (cause == SelectionChangedCause.toolbar) {
-        hideToolbar();
-      }
-      return;
-    }
-    
-    // The clipboard can refuse a read as it can a write (see [copySelection]),
-    // and the answer can come after this edit is gone: neither is anyone's to
-    // be told about, and a gone one has no state to set.
-    final ClipboardData? data;
-    try {
-      data = await Clipboard.getData(Clipboard.kTextPlain);
-    } on PlatformException {
-      return;
-    }
-    if (!mounted || data == null || data.text == null) {
-      return;
-    }
-    final text = _currentEditingState.text;
-    // An editing value with no selection (offsets of -1) has no before or
-    // after to split at; the paste goes at the end (SERVERBOX-1AL).
-    final selection = _currentEditingState.selection.isValid
-        ? _currentEditingState.selection
-        : TextSelection.collapsed(offset: text.length);
-    final newText =
-        selection.textBefore(text) + data.text! + selection.textAfter(text);
-    textEditingValue = TextEditingValue(
-      text: newText,
-      selection: TextSelection.collapsed(
-        offset: selection.start + data.text!.length,
-      ),
-    );
+
+    // Whatever the clipboard turns out to hold. It was put away only after a
+    // paste that worked, so an empty or refused one left the menu up.
     if (cause == SelectionChangedCause.toolbar) {
       hideToolbar();
     }
-    _showCaretOnScreen();
+
+    widget.onPaste?.call();
   }
 
   @override
   void selectAll(SelectionChangedCause cause) {
     if (widget.onSelectAll != null) {
       widget.onSelectAll!();
-      _menuController.markNeedsBuild();
+      // A keyboard select-all has no menu up to move, and asking one that is
+      // not shown asserts. Moved rather than rebuilt: it was over the old
+      // selection.
+      if (_menuController.isShown) {
+        final rect = widget.selectionRect?.call();
+        if (rect != null) {
+          showToolbar(globalSelectionRect: rect);
+        } else {
+          _menuController.markNeedsBuild();
+        }
+      }
       setState(() {});
     } else if (!widget.readOnly && _currentEditingState.text.isNotEmpty) {
       textEditingValue = _currentEditingState.copyWith(

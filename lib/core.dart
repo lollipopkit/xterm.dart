@@ -18,6 +18,7 @@ export 'src/core/mouse/button.dart';
 export 'src/core/mouse/button_state.dart';
 export 'src/core/mouse/handler.dart';
 export 'src/core/mouse/mode.dart';
+export 'src/core/mouse/modifiers.dart';
 export 'src/core/platform.dart';
 export 'src/core/program_status.dart';
 export 'src/core/snapshot.dart';

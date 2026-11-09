@@ -30,16 +30,13 @@ class BufferRangeBlock extends BufferRange {
 
   @override
   Iterable<BufferSegment> toSegments() sync* {
-    var begin = this.begin;
-    var end = this.end;
+    // Corners across the other diagonal are neither order of the two ends.
+    final normal = normalized;
+    final begin = normal.begin;
+    final end = normal.end;
 
-    if (!isNormalized) {
-      end = this.begin;
-      begin = this.end;
-    }
-
-    final startX = min(begin.x, end.x);
-    final endX = max(begin.x, end.x);
+    final startX = begin.x;
+    final endX = end.x;
     for (var i = begin.y; i <= end.y; i++) {
       yield BufferSegment(this, i, startX, endX);
     }
@@ -47,20 +44,11 @@ class BufferRangeBlock extends BufferRange {
 
   @override
   bool contains(CellOffset position) {
-    var begin = this.begin;
-    var end = this.end;
-
-    if (!isNormalized) {
-      end = this.begin;
-      begin = this.end;
-    }
-    if (!(begin.y <= position.y && position.y <= end.y)) {
-      return false;
-    }
-
-    final startX = min(begin.x, end.x);
-    final endX = max(begin.x, end.x);
-    return startX <= position.x && position.x <= endX;
+    final normal = normalized;
+    return normal.begin.y <= position.y &&
+        position.y <= normal.end.y &&
+        normal.begin.x <= position.x &&
+        position.x <= normal.end.x;
   }
 
   @override
